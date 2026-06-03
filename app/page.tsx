@@ -1,18 +1,20 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation'; // Added for cross-feature path routing
 import {
   Users, CheckCircle, Star, Clock, Home, ListTodo,
   FileSpreadsheet, BarChart3, Settings, Plus, Search,
-  Download, Trash2, GraduationCap, SlidersHorizontal, Check, X, Edit2, Eye, Calendar, FileText, Mail, Building2, Briefcase, PlusCircle, ArrowRight, EyeOff, Bell, Shield, Palette, Database, Globe, Save, RefreshCw,
+  Download, Trash2, GraduationCap, SlidersHorizontal, Check, X, Edit2, Eye, FileText, Mail, Building2, ArrowRight, EyeOff, Bell, Database, Globe, Save, RefreshCw,
   Folder, FolderPlus, FolderOpen, ChevronRight
 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/apiClient';
 
 import dynamic from 'next/dynamic';
 const ResponsiveContainer = dynamic(() => import('recharts').then(m => m.ResponsiveContainer), { ssr: false });
@@ -25,17 +27,51 @@ const YAxis = dynamic(() => import('recharts').then(m => m.YAxis), { ssr: false 
 const CartesianGrid = dynamic(() => import('recharts').then(m => m.CartesianGrid), { ssr: false });
 const Tooltip = dynamic(() => import('recharts').then(m => m.Tooltip), { ssr: false });
 
-type PageType = 'dashboard' | 'assignments' | 'collections' | 'forms' | 'results' | 'participants' | 'companies' | 'reports' | 'settings';
+// Removed 'forms' option from local page tracking options block list parameters
+type PageType = 'dashboard' | 'assignments' | 'collections' | 'results' | 'participants' | 'companies' | 'reports' | 'settings';
 
 interface Participant { id: string; name: string; firstName: string; lastName: string; company: string; department: string; email: string; status: 'Enabled' | 'Disabled'; }
-interface FormBlueprint { id: string; name: string; created: string; status: 'Enabled' | 'Disabled'; description?: string; googleFormUrl?: string; }
-interface Assignment { id: string; name: string; formName: string; assignedTo: string; dueDate: string; completedText: string; status: 'Enabled' | 'Disabled'; rawDate?: string; published: boolean; publishedAt?: string; }
+interface FormBlueprint {
+  id: string;
+  name: string;
+  created: string;
+  status: 'Enabled' | 'Disabled';
+  description?: string;
+  googleFormUrl?: string;
+  type?: string;
+  questionCount?: number;
+  maxPossibleScore?: number;
+  published?: boolean;
+  publishedAt?: string;
+  structure?: {
+    formName: string;
+    description: string;
+    fields: unknown[];
+  };
+}
+interface Assignment { id: string; name: string; formName: string; formBlueprintId?: string; assignedTo: string; dueDate: string; completedText: string; status: 'Enabled' | 'Disabled'; rawDate?: string; published: boolean; publishedAt?: string; }
 interface Submission { id: string; participantName: string; program: string; assignmentName: string; score: number | null; status: 'Completed' | 'In Progress' | 'Pending'; progress: number; }
 interface Report { id: string; name: string; type: string; generated: string; format: string; size: string; }
 interface Company { id: string; name: string; industry?: string; createdDate: string; status: 'Enabled' | 'Disabled'; }
 interface CollectionFolder { id: string; name: string; description: string; createdDate: string; assignmentIds: string[]; }
+interface PlatformSettings { platformName: string; notificationsEnabled: boolean; autoReports: boolean; timezone: string; }
+
+function SubmissionStatusBadge({ status }: { status: Submission['status'] }) {
+  const styles: Record<Submission['status'], string> = {
+    Completed: 'bg-emerald-950/30 text-emerald-400 border-emerald-900/40',
+    'In Progress': 'bg-amber-950/30 text-amber-400 border-amber-900/40',
+    Pending: 'bg-slate-900/40 text-slate-400 border-slate-700/50',
+  };
+
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${styles[status]}`}>
+      {status}
+    </span>
+  );
+}
 
 export default function WorkinspiresDashboard() {
+  const router = useRouter();
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
 
@@ -49,18 +85,47 @@ export default function WorkinspiresDashboard() {
   // CORE STATE REGISTRIES
   // ==========================================
   const [companiesData, setCompaniesData] = useState<Company[]>([]);
-
   const [participants, setParticipants] = useState<Participant[]>([]);
-
   const [forms, setForms] = useState<FormBlueprint[]>([]);
-
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-
   const [submissions, setSubmissions] = useState<Submission[]>([]);
-
   const [reports, setReports] = useState<Report[]>([]);
-
   const [folders, setFolders] = useState<CollectionFolder[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRecords() {
+      try {
+        const [companyRows, participantRows, formRows, assignmentRows, settings] = await Promise.all([
+          apiGet<Company[]>('/api/companies'),
+          apiGet<Participant[]>('/api/participants'),
+          apiGet<FormBlueprint[]>('/api/forms'),
+          apiGet<Assignment[]>('/api/assignments'),
+          apiGet<PlatformSettings>('/api/settings'),
+        ]);
+
+        if (cancelled) return;
+
+        setCompaniesData(companyRows);
+        setParticipants(participantRows);
+        setForms(formRows);
+        setAssignments(assignmentRows);
+        setPlatformName(settings.platformName);
+        setNotificationsEnabled(settings.notificationsEnabled);
+        setAutoReports(settings.autoReports);
+        setTimezone(settings.timezone);
+      } catch (error) {
+        console.error('Failed to load database records.', error);
+      }
+    }
+
+    loadRecords();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Modal open states
   const [isAssignmentOpen, setIsAssignmentOpen] = useState(false);
@@ -100,7 +165,6 @@ export default function WorkinspiresDashboard() {
   const activeCompaniesOptions = useMemo(() => companiesData.filter(c => c.status === 'Enabled'), [companiesData]);
   const activeFormsOptions = useMemo(() => forms.filter(f => f.status === 'Enabled'), [forms]);
 
-  // Track all assignment IDs currently tied to any folder
   const folderCollectedAssignmentIds = useMemo(() => {
     return folders.reduce((acc, folder) => [...acc, ...folder.assignmentIds], [] as string[]);
   }, [folders]);
@@ -159,7 +223,7 @@ export default function WorkinspiresDashboard() {
   };
 
   const pageTitle: Record<PageType, string> = {
-    dashboard: 'Dashboard', assignments: 'Assignments', collections: 'Collections', forms: 'Form Builder',
+    dashboard: 'Dashboard', assignments: 'Assignments', collections: 'Collections',
     results: 'Results', participants: 'Participants', companies: 'Companies',
     reports: 'Reports', settings: 'Settings'
   };
@@ -187,8 +251,7 @@ export default function WorkinspiresDashboard() {
     } else {
       const newFolder: CollectionFolder = {
         id: `fol_${Date.now()}`,
-        name,
-        description,
+        name, description,
         createdDate: formatDate(new Date().toISOString().split('T')[0]),
         assignmentIds: selectedAssignmentIds
       };
@@ -204,7 +267,7 @@ export default function WorkinspiresDashboard() {
     }
   };
 
-  const handleSaveAssignment = (e: React.FormEvent<HTMLFormElement>, publish = false) => {
+  const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish = false) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const name = (data.get('name') as string || '').trim();
@@ -215,48 +278,64 @@ export default function WorkinspiresDashboard() {
     if (!name || !formName || !target || !date) { alert("Please fill in all required fields."); return; }
 
     const targetParticipants = participants.filter(p => p.company === target && p.status === 'Enabled');
+    const selectedForm = forms.find(f => f.name === formName);
 
     if (editingAssignment) {
       const wasPublished = editingAssignment.published;
       const nowPublishing = publish && !wasPublished;
-      setAssignments(assignments.map(a => a.id === editingAssignment.id ? {
-        ...a, name, formName, assignedTo: target,
+      const savedAssignment = await apiPut<Assignment>(`/api/assignments/${editingAssignment.id}`, {
+        ...editingAssignment, name, formName, formBlueprintId: editingAssignment.formBlueprintId ?? selectedForm?.id, assignedTo: target,
         dueDate: date.includes('-') ? formatDate(date) : date, rawDate: date, status,
         published: publish || wasPublished,
-        publishedAt: nowPublishing ? formatDate(new Date().toISOString().split('T')[0]) : a.publishedAt
-      } : a));
+      });
+      setAssignments(assignments.map(a => a.id === editingAssignment.id ? savedAssignment : a));
       if (nowPublishing) alert(`Assignment published! Email notifications sent to ${targetParticipants.length} participant(s) at ${target}.`);
       setEditingAssignment(null);
     } else {
-      const newAsg: Assignment = {
+      const newAsg = await apiPost<Assignment>('/api/assignments', {
         id: `asg_${Date.now()}`, name, formName, assignedTo: target,
-        dueDate: formatDate(date), rawDate: date, completedText: "0 assigned",
+        formBlueprintId: selectedForm?.id,
+        rawDate: date,
+        totalCount: targetParticipants.length,
         status: "Enabled", published: publish,
-        publishedAt: publish ? formatDate(new Date().toISOString().split('T')[0]) : undefined
-      };
+      });
       setAssignments([newAsg, ...assignments]);
       if (publish) alert(`Assignment published! Email notifications sent to ${targetParticipants.length} participant(s) at ${target}.`);
     }
     setIsAssignmentOpen(false);
   };
 
-  const handlePublishAssignment = (id: string) => {
+  const handlePublishAssignment = async (id: string) => {
     const asg = assignments.find(a => a.id === id);
     if (!asg) return;
     const targetParticipants = participants.filter(p => p.company === asg.assignedTo && p.status === 'Enabled');
     if (confirm(`Publish "${asg.name}" to ${targetParticipants.length} participant(s) at ${asg.assignedTo}?\n\nThis will send email notifications to:\n${targetParticipants.map(p => `• ${p.name} (${p.email})`).join('\n')}`)) {
-      setAssignments(assignments.map(a => a.id === id ? { ...a, published: true, publishedAt: formatDate(new Date().toISOString().split('T')[0]) } : a));
+      const savedAssignment = await apiPut<Assignment>(`/api/assignments/${id}`, { ...asg, published: true });
+      setAssignments(assignments.map(a => a.id === id ? savedAssignment : a));
     }
   };
 
-  const deleteAssignment = (id: string) => {
+  const navBtn = (page: PageType, icon: React.ReactNode, label: string) => (
+    <button
+      onClick={() => navigate(page)}
+      className={`w-full text-left flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[14px] font-medium transition-all ${currentPage === page
+        ? 'bg-gradient-to-r from-[#3b82f6] to-transparent bg-[#3b82f6]/20 text-[#3b82f6] border-l-[3px] border-[#3b82f6] shadow-[inset_0_0_15px_rgba(59,130,246,0.1)]'
+        : 'text-[#cbd5e1] border-l-[3px] border-transparent hover:bg-[#475569] hover:text-white'}`}
+    >
+      {icon} {label}
+    </button>
+  );
+
+
+  const deleteAssignment = async (id: string) => {
     if (confirm("Remove this assignment?")) {
+      await apiDelete(`/api/assignments/${id}`);
       setAssignments(assignments.filter(a => a.id !== id));
       setFolders(folders.map(f => ({ ...f, assignmentIds: f.assignmentIds.filter(aid => aid !== id) })));
     }
   };
 
-  const handleSaveForm = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSaveForm = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const name = (data.get('name') as string || '').trim();
@@ -265,19 +344,39 @@ export default function WorkinspiresDashboard() {
     const status = (data.get('status') as 'Enabled' | 'Disabled') || 'Enabled';
     if (!name) { alert("Please fill in the form name."); return; }
     if (editingForm) {
-      setForms(forms.map(f => f.id === editingForm.id ? { ...f, name, description, googleFormUrl, status } : f));
+      const savedForm = await apiPut<FormBlueprint>(`/api/forms/${editingForm.id}`, {
+        ...editingForm,
+        name,
+        description,
+        googleFormUrl,
+        status,
+        structure: editingForm.structure ?? { formName: name, description, fields: [] },
+      });
+      setForms(forms.map(f => f.id === editingForm.id ? savedForm : f));
       setEditingForm(null);
     } else {
-      setForms([{ id: `form_${Date.now()}`, name, description, googleFormUrl, created: formatDate(new Date().toISOString().split('T')[0]), status: "Enabled" }, ...forms]);
+      const savedForm = await apiPost<FormBlueprint>('/api/forms', {
+        id: `form_${Date.now()}`,
+        name,
+        description,
+        googleFormUrl,
+        created: formatDate(new Date().toISOString().split('T')[0]),
+        status: "Enabled",
+        structure: { formName: name, description, fields: [] },
+      });
+      setForms([savedForm, ...forms]);
     }
     setIsFormOpen(false);
   };
 
-  const deleteFormBlueprint = (id: string) => {
-    if (confirm("Delete this form blueprint?")) setForms(forms.filter(f => f.id !== id));
+  const deleteFormBlueprint = async (id: string) => {
+    if (confirm("Delete this form blueprint?")) {
+      await apiDelete(`/api/forms/${id}`);
+      setForms(forms.filter(f => f.id !== id));
+    }
   };
 
-  const handleSaveParticipant = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSaveParticipant = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const firstName = (data.get('firstName') as string || '').trim();
@@ -288,21 +387,26 @@ export default function WorkinspiresDashboard() {
     const status = (data.get('status') as 'Enabled' | 'Disabled') || 'Enabled';
     if (!firstName || !lastName || !email || !company) { alert("Please fill in all required fields."); return; }
     if (editingParticipant) {
-      setParticipants(participants.map(p => p.id === editingParticipant.id ? {
-        ...p, firstName, lastName, name: `${firstName} ${lastName}`, email, department, company, status
-      } : p));
+      const savedParticipant = await apiPut<Participant>(`/api/participants/${editingParticipant.id}`, {
+        ...editingParticipant, firstName, lastName, name: `${firstName} ${lastName}`, email, department, company, status
+      });
+      setParticipants(participants.map(p => p.id === editingParticipant.id ? savedParticipant : p));
       setEditingParticipant(null);
     } else {
-      setParticipants([{ id: `part_${Date.now()}`, firstName, lastName, name: `${firstName} ${lastName}`, email, department, company, status: "Enabled" }, ...participants]);
+      const savedParticipant = await apiPost<Participant>('/api/participants', { id: `part_${Date.now()}`, firstName, lastName, name: `${firstName} ${lastName}`, email, department, company, status: "Enabled" });
+      setParticipants([savedParticipant, ...participants]);
     }
     setIsParticipantOpen(false);
   };
 
-  const deleteParticipant = (id: string) => {
-    if (confirm("Remove this participant?")) setParticipants(participants.filter(p => p.id !== id));
+  const deleteParticipant = async (id: string) => {
+    if (confirm("Remove this participant?")) {
+      await apiDelete(`/api/participants/${id}`);
+      setParticipants(participants.filter(p => p.id !== id));
+    }
   };
 
-  const handleSaveCompany = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSaveCompany = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const name = (data.get('name') as string || '').trim();
@@ -310,19 +414,24 @@ export default function WorkinspiresDashboard() {
     const status = (data.get('status') as 'Enabled' | 'Disabled') || 'Enabled';
     if (!name) { alert("Company name is required."); return; }
     if (editingCompany) {
-      setParticipants(participants.map(p => p.company === editingCompany.name ? { ...p, company: name } : p));
-      setCompaniesData(companiesData.map(c => c.id === editingCompany.id ? { ...c, name, industry, status } : c));
+      const savedCompany = await apiPut<Company>(`/api/companies/${editingCompany.id}`, { ...editingCompany, name, industry, status });
+      setParticipants(participants.map(p => p.company === editingCompany.name ? { ...p, company: savedCompany.name } : p));
+      setCompaniesData(companiesData.map(c => c.id === editingCompany.id ? savedCompany : c));
       setEditingCompany(null);
     } else {
-      setCompaniesData([{ id: `c_${Date.now()}`, name, industry, createdDate: formatDate(new Date().toISOString().split('T')[0]), status: "Enabled" }, ...companiesData]);
+      const savedCompany = await apiPost<Company>('/api/companies', { id: `c_${Date.now()}`, name, industry, createdDate: formatDate(new Date().toISOString().split('T')[0]), status: "Enabled" });
+      setCompaniesData([savedCompany, ...companiesData]);
     }
     setIsCompanyOpen(false);
   };
 
-  const deleteCompanyEntity = (id: string, name: string) => {
+  const deleteCompanyEntity = async (id: string, name: string) => {
     const clusterCount = participants.filter(p => p.company === name).length;
     if (clusterCount > 0) { alert(`Cannot delete "${name}" — ${clusterCount} participants are still linked.`); return; }
-    if (confirm(`Delete company "${name}"?`)) setCompaniesData(companiesData.filter(c => c.id !== id));
+    if (confirm(`Delete company "${name}"?`)) {
+      await apiDelete(`/api/companies/${id}`);
+      setCompaniesData(companiesData.filter(c => c.id !== id));
+    }
   };
 
   const handleSaveSubmission = (e: React.FormEvent<HTMLFormElement>) => {
@@ -358,11 +467,9 @@ export default function WorkinspiresDashboard() {
     if (!name || !type) { alert("Please fill in report name and type."); return; }
     const newReport: Report = {
       id: `r_${Date.now()}`,
-      name,
-      type,
+      name, type,
       generated: formatDate(new Date().toISOString().split('T')[0]),
-      format,
-      size: `${(Math.random() * 3 + 0.5).toFixed(1)} MB`
+      format, size: `${(Math.random() * 3 + 0.5).toFixed(1)} MB`
     };
     setReports([newReport, ...reports]);
     setIsReportOpen(false);
@@ -372,7 +479,18 @@ export default function WorkinspiresDashboard() {
     if (confirm("Delete this report?")) setReports(reports.filter(r => r.id !== id));
   };
 
-  const handleSaveSettings = () => {
+  const handleSaveSettings = async () => {
+    const settings = await apiPut<PlatformSettings>('/api/settings', {
+      platformName,
+      notificationsEnabled,
+      autoReports,
+      timezone,
+    });
+
+    setPlatformName(settings.platformName);
+    setNotificationsEnabled(settings.notificationsEnabled);
+    setAutoReports(settings.autoReports);
+    setTimezone(settings.timezone);
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 2500);
   };
@@ -390,11 +508,6 @@ export default function WorkinspiresDashboard() {
     if (currentPage === 'collections') return (
       <button className={btnClass} onClick={() => { setEditingFolder(null); setIsFolderOpen(true); }}>
         <FolderPlus className="h-4 w-4" /> New Folder
-      </button>
-    );
-    if (currentPage === 'forms') return (
-      <button className={btnClass} onClick={() => { setEditingForm(null); setIsFormOpen(true); }}>
-        <Plus className="h-4 w-4" /> New Form
       </button>
     );
     if (currentPage === 'participants') return (
@@ -420,30 +533,6 @@ export default function WorkinspiresDashboard() {
     return null;
   };
 
-  const navBtn = (page: PageType, icon: React.ReactNode, label: string) => (
-    <button
-      onClick={() => navigate(page)}
-      className={`w-full text-left flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[14px] font-medium transition-all ${currentPage === page
-        ? 'bg-gradient-to-r from-[#3b82f6] to-transparent bg-[#3b82f6]/20 text-[#3b82f6] border-l-[3px] border-[#3b82f6] shadow-[inset_0_0_15px_rgba(59,130,246,0.1)]'
-        : 'text-[#cbd5e1] border-l-[3px] border-transparent hover:bg-[#475569] hover:text-white'}`}
-    >
-      {icon} {label}
-    </button>
-  );
-
-  const SubmissionStatusBadge = ({ status }: { status: Submission['status'] }) => {
-    const styles: Record<Submission['status'], string> = {
-      Completed: 'bg-[#10b981]/15 text-[#10b981] border-[#10b981]/30',
-      'In Progress': 'bg-[#f59e0b]/15 text-[#f59e0b] border-[#f59e0b]/30',
-      Pending: 'bg-slate-500/10 text-slate-400 border-slate-500/20'
-    };
-    return (
-      <span className={`px-2.5 py-1 rounded-full font-bold text-[11px] uppercase border ${styles[status]}`}>
-        {status}
-      </span>
-    );
-  };
-
   return (
     <div className="grid grid-cols-[280px_1fr] h-screen bg-[#0f172a] text-[#f1f5f9] overflow-hidden antialiased select-none font-sans">
 
@@ -464,7 +553,15 @@ export default function WorkinspiresDashboard() {
             </div>
             <div className="space-y-1">
               <p className="text-[10px] font-semibold tracking-widest text-[#94a3b8]/50 uppercase px-3 mb-3">MANAGEMENT</p>
-              {navBtn('forms', <FileSpreadsheet className="h-[18px] w-[18px]" />, 'Form Builder')}
+              
+              {/* 🌐 INTERACTIVE SIDEBAR ROUTING LINK SWITCH */}
+              <button
+                onClick={() => router.push('/forms')}
+                className="w-full text-left flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[14px] font-medium transition-all text-[#cbd5e1] border-l-[3px] border-transparent hover:bg-[#475569] hover:text-white"
+              >
+                <FileSpreadsheet className="h-[18px] w-[18px]" /> Form Builder
+              </button>
+
               {navBtn('results', <BarChart3 className="h-[18px] w-[18px]" />, 'Results')}
               {navBtn('participants', <Users className="h-[18px] w-[18px]" />, 'Participants')}
               {navBtn('companies', <Building2 className="h-[18px] w-[18px]" />, 'Companies')}
@@ -572,7 +669,6 @@ export default function WorkinspiresDashboard() {
                   </TableHeader>
                   <TableBody>
                     {assignments
-                      // MODIFIED: Excludes any items sitting in folderCollectedAssignmentIds
                       .filter(a => !folderCollectedAssignmentIds.includes(a.id))
                       .filter(a => globalSearchQuery === '' || matchQuery(a.name) || matchQuery(a.assignedTo))
                       .map(asg => (
@@ -715,55 +811,6 @@ export default function WorkinspiresDashboard() {
                   )}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* FORM BUILDER */}
-          {currentPage === 'forms' && (
-            <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md animate-in fade-in duration-200">
-              <div className="w-full overflow-x-auto rounded-xl border border-[#475569]/20">
-                <Table className="text-xs min-w-[900px]">
-                  <TableHeader className="bg-[#475569]">
-                    <TableRow className="border-[#475569] hover:bg-[#475569]">
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Form Name</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Description</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Google Form</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Created</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Status</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px] text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {forms.filter(f => globalSearchQuery === '' || matchQuery(f.name)).map(form => (
-                      <TableRow key={form.id} className={`border-b border-[#475569]/30 hover:bg-[#475569]/40 ${form.status === 'Disabled' ? 'opacity-50' : ''}`}>
-                        <TableCell className="font-bold text-white py-4">{form.name}</TableCell>
-                        <TableCell className="text-[#94a3b8] py-4 max-w-[220px] truncate">{form.description || '—'}</TableCell>
-                        <TableCell className="py-4">
-                          {form.googleFormUrl
-                            ? <button onClick={() => window.open(form.googleFormUrl, '_blank')} className="text-[#3b82f6] text-[11px] underline underline-offset-2 hover:text-[#60a5fa]">Open link ↗</button>
-                            : <span className="text-[#475569] text-[11px]">Not linked</span>}
-                        </TableCell>
-                        <TableCell className="text-[#94a3b8] py-4">{form.created}</TableCell>
-                        <TableCell className="py-4">
-                          <span className={`px-2.5 py-1 rounded-full font-bold text-[11px] uppercase border ${form.status === 'Enabled' ? 'bg-[#10b981]/15 text-[#10b981] border-[#10b981]/30' : 'bg-slate-500/10 text-slate-400 border-slate-500/20'}`}>
-                            {form.status}
-                          </span>
-                        </TableCell>
-                        <TableCell className="py-4 text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button size="sm" onClick={() => setViewingForm(form)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
-                            <Button size="sm" onClick={() => { setEditingForm(form); setIsFormOpen(true); }} className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 w-8 p-0"><Edit2 className="h-3.5 w-3.5" /></Button>
-                            <Button size="sm" onClick={() => deleteFormBlueprint(form.id)} className="bg-rose-950/20 border border-rose-900/50 text-rose-400 hover:bg-rose-900/20 h-8 w-8 p-0"><Trash2 className="h-3.5 w-3.5" /></Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {forms.filter(f => globalSearchQuery === '' || matchQuery(f.name)).length === 0 && (
-                      <TableRow><TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">No forms found.</TableCell></TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
             </div>
           )}
 
@@ -1086,7 +1133,6 @@ export default function WorkinspiresDashboard() {
               <p className="text-[11px] text-[#94a3b8] -mt-1">Select assignments to bundle. (Already collected items are hidden or editable here):</p>
               <div className="bg-[#0f172a]/50 border border-[#475569]/40 rounded-xl p-4 max-h-[180px] overflow-y-auto space-y-2.5">
                 {assignments
-                  // MODIFIED: Displays items if they are uncollected OR already belong to this specific folder being edited
                   .filter(asg => !folderCollectedAssignmentIds.includes(asg.id) || editingFolder?.assignmentIds.includes(asg.id))
                   .map(asg => (
                     <div key={asg.id} className="flex items-start gap-3 text-xs select-none">

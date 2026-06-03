@@ -1,0 +1,47 @@
+services:
+  # This builds and runs your existing repository
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/.next
+      - /app/node_modules
+    environment:
+      - DATABASE_URL=postgres://myuser:mypassword@db:5432/mydb
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # This spins up your database automatically
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mydb
+    ports:
+      - "5432:5432" # Allows your host machine to talk to the DB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U myuser -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 🚀 ADDED: The built-in browser-based database GUI
+  db-gui:
+    image: adminer:latest
+    container_name: workinspires-db-gui
+    restart: always
+    ports:
+      - "8088:8080" # Maps port 8088 on your laptop to Adminer's internal port 8080
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

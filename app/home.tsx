@@ -6,16 +6,6 @@ import { Home, GraduationCap, ArrowRight } from 'lucide-react';
 import { useAppContext } from '@/lib/AppContext';
 
 export default function HomePage() {
-  const { participants, companies, assignments, forms, folders, submissions, reports } = useAppContext();
-
-  const navigationLinks = [
-    {
-      category: 'MAIN',
-      links: [
-        { href: '/dashboard', icon: Home, label: 'Dashboard', description: 'View overview & analytics' },
-      ]
-    },
-  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0f172a] to-[#1a1f35] text-[#f1f5f9] p-8">

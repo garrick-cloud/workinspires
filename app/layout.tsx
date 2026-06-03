@@ -1,7 +1,7 @@
-// app/layout.tsx
+// src/app/layout.tsx
 import "./globals.css";
 import type { Metadata } from "next";
-import { AppContextProvider } from '@/lib/AppContext';
+import { DashboardProvider } from '@/context/DashboardContext'; // Ensure this path is correct!
 
 export const metadata: Metadata = {
   title: "Workinspires - Training Performance Evaluation Platform",
@@ -16,9 +16,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="antialiased font-sans bg-[#0f172a] text-[#f1f5f9]">
-        <AppContextProvider>
+        <DashboardProvider>
           {children}
-        </AppContextProvider>
+        </DashboardProvider>
       </body>
     </html>
   );
