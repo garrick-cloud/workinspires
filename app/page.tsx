@@ -300,7 +300,25 @@ export default function WorkinspiresDashboard() {
         status: "Enabled", published: publish,
       });
       setAssignments([newAsg, ...assignments]);
-      if (publish) alert(`Assignment published! Email notifications sent to ${targetParticipants.length} participant(s) at ${target}.`);
+      if (publish) {
+        await fetch("/api/send-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: targetParticipants.map(p => p.email).join(","),
+            subject: `New Assignment: ${name}`,
+            html: `
+              <h2>New Assignment: ${name}</h2>
+              <p>You have been assigned a new task by your administrator.</p>
+              <p><strong>Due Date:</strong> ${formatDate(date)}</p>
+              <a href="${process.env.NEXT_PUBLIC_APP_URL}/assignments/${newAsg.id}" 
+                style="display:inline-block;padding:10px 20px;background:#3b82f6;color:white;border-radius:6px;text-decoration:none;">
+                View Assignment
+              </a>
+            `,
+          }),
+        });
+      }
     }
     setIsAssignmentOpen(false);
   };
@@ -312,6 +330,59 @@ export default function WorkinspiresDashboard() {
     if (confirm(`Publish "${asg.name}" to ${targetParticipants.length} participant(s) at ${asg.assignedTo}?\n\nThis will send email notifications to:\n${targetParticipants.map(p => `• ${p.name} (${p.email})`).join('\n')}`)) {
       const savedAssignment = await apiPut<Assignment>(`/api/assignments/${id}`, { ...asg, published: true });
       setAssignments(assignments.map(a => a.id === id ? savedAssignment : a));
+
+      await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: targetParticipants.map(p => p.email).join(","),
+          subject: `New Assignment: ${asg.name}`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; padding: 40px 20px; text-align: center;">
+              <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 32px; text-align: left; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                
+                <div style="margin-bottom: 24px;">
+                  <span style="font-size: 14px; font-weight: 700; color: #3b82f6; text-transform: uppercase; tracking-spacing: 0.05em;">WorkInspires</span>
+                </div>
+
+                <h2 style="font-size: 20px; font-weight: 700; color: #111827; margin: 0 0 12px 0; line-height: 1.4;">
+                  New Assignment: <span style="color: #2563eb;">${asg.name}</span>
+                </h2>
+                
+                <p style="font-size: 15px; color: #4b5563; margin: 0 0 20px 0; line-height: 1.6;">
+                  You have been assigned a new task by your administrator. Please review the details and deadline below to get started.
+                </p>
+
+                <div style="background-color: #f3f4f6; border-radius: 8px; padding: 16px; margin-bottom: 28px;">
+                  <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; font-size: 14px; color: #374151;">
+                    <tr>
+                      <td style="padding-bottom: 4px; color: #6b7280; font-weight: 500; width: 90px;">Task:</td>
+                      <td style="padding-bottom: 4px; font-weight: 600; color: #111827;">${asg.name}</td>
+                    </tr>
+                    <tr>
+                      <td style="color: #6b7280; font-weight: 500;">Due Date:</td>
+                      <td style="font-weight: 600; color: #dc2626;">${asg.dueDate}</td>
+                    </tr>
+                  </table>
+                </div>
+
+                <div style="text-align: center; margin-bottom: 16px;">
+                  <a href="${process.env.NEXT_PUBLIC_APP_URL}/assignments/${id}"
+                    style="display: inline-block; padding: 12px 28px; background-color: #2563eb; color: #ffffff; font-weight: 600; font-size: 15px; border-radius: 8px; text-decoration: none; transition: background-color 0.2s;">
+                    View Assignment
+                  </a>
+                </div>
+
+                <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
+
+                <p style="font-size: 12px; color: #9ca3af; text-align: center; margin: 0;">
+                  This is an automated operational message from WorkInspires.
+                </p>
+              </div>
+            </div>
+          `,
+        }),
+      });
     }
   };
 
@@ -325,7 +396,6 @@ export default function WorkinspiresDashboard() {
       {icon} {label}
     </button>
   );
-
 
   const deleteAssignment = async (id: string) => {
     if (confirm("Remove this assignment?")) {
@@ -518,11 +588,6 @@ export default function WorkinspiresDashboard() {
     if (currentPage === 'companies') return (
       <button className={btnClass} onClick={() => { setEditingCompany(null); setIsCompanyOpen(true); }}>
         <Plus className="h-4 w-4" /> New Company
-      </button>
-    );
-    if (currentPage === 'results') return (
-      <button className={btnClass} onClick={() => { setEditingSubmission(null); setIsSubmissionOpen(true); }}>
-        <Plus className="h-4 w-4" /> New Result
       </button>
     );
     if (currentPage === 'reports') return (
@@ -1392,42 +1457,6 @@ export default function WorkinspiresDashboard() {
               </select>
             </div>
             <DialogFooter><Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full h-11 font-bold">Save Company</Button></DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* CRUD: Submission / Result */}
-      <Dialog open={isSubmissionOpen} onOpenChange={(open) => { setIsSubmissionOpen(open); if (!open) setEditingSubmission(null); }}>
-        <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-[#475569] text-[#f1f5f9] p-8 rounded-xl max-w-[580px] shadow-2xl">
-          <DialogHeader className="border-b border-[#475569] pb-4 mb-4"><DialogTitle className="text-xl font-bold">{editingSubmission ? 'Edit Result' : 'New Result Entry'}</DialogTitle></DialogHeader>
-          <form onSubmit={handleSaveSubmission} className="space-y-5">
-            <div className="space-y-2">
-              <Label>Participant *</Label>
-              <select name="participantName" required defaultValue={editingSubmission?.participantName || ""} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                <option value="" disabled>-- Select Participant --</option>
-                {participants.filter(p => p.status === 'Enabled').map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                {editingSubmission && !participants.find(p => p.name === editingSubmission.participantName && p.status === 'Enabled') && (
-                  <option value={editingSubmission.participantName}>{editingSubmission.participantName}</option>
-                )}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>Program *</Label><Input name="program" required placeholder="e.g. Leadership Training" defaultValue={editingSubmission?.program || ''} className="bg-[#334155] border-[#475569] h-11 text-white" /></div>
-              <div className="space-y-2"><Label>Assignment Name *</Label><Input name="assignmentName" required placeholder="e.g. Module 1" defaultValue={editingSubmission?.assignmentName || ''} className="bg-[#334155] border-[#475569] h-11 text-white" /></div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>Score (0–100)</Label><Input type="number" name="score" min={0} max={100} placeholder="Leave blank if not scored" defaultValue={editingSubmission?.score ?? ''} className="bg-[#334155] border-[#475569] h-11 text-white" /></div>
-              <div className="space-y-2"><Label>Progress %</Label><Input type="number" name="progress" min={0} max={100} defaultValue={editingSubmission?.progress ?? 0} className="bg-[#334155] border-[#475569] h-11 text-white" /></div>
-            </div>
-            <div className="space-y-2">
-              <Label>Status *</Label>
-              <select name="status" required defaultValue={editingSubmission?.status || "Pending"} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                <option value="Pending">Pending</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Completed">Completed</option>
-              </select>
-            </div>
-            <DialogFooter><Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full h-11 font-bold">Save Result</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

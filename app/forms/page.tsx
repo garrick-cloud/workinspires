@@ -4,17 +4,20 @@
 import React, { useState, useMemo } from 'react';
 import { useDashboard } from '@/context/DashboardContext';
 import { FormField, FormFieldType, FormBlueprint } from '@/types/form';
+import type { FormAnswerValue } from '@/types/submission';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { 
-  Plus, Trash2, Move, Type, AlignLeft, UploadCloud, SlidersHorizontal, Award, ShieldAlert, ArrowLeft, Eye, Edit2, CheckCircle2
+  Plus, Trash2, Move, Type, AlignLeft, UploadCloud, SlidersHorizontal, Award, ShieldAlert, ArrowLeft, Eye, Edit2, CheckCircle2, FlaskConical
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { apiDelete, apiPost, apiPut } from '@/lib/apiClient';
+import FormRenderer from '@/components/FormRenderer';
+import { buildAnswers, totalFromAnswers } from '@/lib/formScoring';
 
-type StudioViewState = 'listings' | 'builder' | 'viewer';
+type StudioViewState = 'listings' | 'builder' | 'viewer' | 'demo';
 
 export default function FormBuilderPage() {
   const { forms, setForms, setCurrentPage } = useDashboard();
@@ -31,6 +34,10 @@ export default function FormBuilderPage() {
 
   // Selected JSON Inspector viewer target placeholder state
   const [viewingFormBlueprint, setViewingFormBlueprint] = useState<FormBlueprint | null>(null);
+  const [demoFormBlueprint, setDemoFormBlueprint] = useState<FormBlueprint | null>(null);
+  const [demoValues, setDemoValues] = useState<Record<string, FormAnswerValue>>({});
+  const [demoErrors, setDemoErrors] = useState<Record<string, string>>({});
+  const [demoResultJson, setDemoResultJson] = useState<string | null>(null);
 
   // Available toolbox drag items palette configuration definition
   const toolBoxItems = [
@@ -107,6 +114,63 @@ export default function FormBuilderPage() {
   const handleLaunchInspectorViewer = (blueprint: FormBlueprint) => {
     setViewingFormBlueprint(blueprint);
     setViewState('viewer');
+  };
+
+  const handleLaunchDemoTester = (blueprint: FormBlueprint) => {
+    setDemoFormBlueprint(blueprint);
+    setDemoValues({});
+    setDemoErrors({});
+    setDemoResultJson(null);
+    setViewState('demo');
+  };
+
+  const handleDemoValueChange = (fieldId: string, value: FormAnswerValue) => {
+    setDemoValues((prev) => ({ ...prev, [fieldId]: value }));
+    setDemoErrors((prev) => {
+      const next = { ...prev };
+      delete next[fieldId];
+      return next;
+    });
+  };
+
+  const handleRunDemoSubmission = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!demoFormBlueprint) return;
+
+    const fields = demoFormBlueprint.structure?.fields ?? [];
+    const nextErrors: Record<string, string> = {};
+
+    fields.forEach((field) => {
+      if (!field.required) return;
+
+      const value = demoValues[field.id];
+      if (field.type === 'likert_scale') {
+        if (typeof value !== 'number') nextErrors[field.id] = 'Select a rating to test validation.';
+      } else if (!String(value ?? '').trim()) {
+        nextErrors[field.id] = 'Enter a sample value to test validation.';
+      }
+    });
+
+    setDemoErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      setDemoResultJson(null);
+      return;
+    }
+
+    const answers = buildAnswers(fields, demoValues);
+    const totalScore = totalFromAnswers(answers);
+    const maxScore = fields.reduce((sum, field) => sum + (Number(field.points) || 0), 0);
+
+    setDemoResultJson(JSON.stringify({
+      mode: 'admin_template_test',
+      persisted: false,
+      formBlueprintId: demoFormBlueprint.id,
+      formName: demoFormBlueprint.name,
+      answers,
+      totalScore,
+      maxScore,
+      testedAt: new Date().toISOString(),
+    }, null, 2));
   };
 
   const handleDeleteFormBlueprintRecord = async (id: string) => {
@@ -221,6 +285,15 @@ export default function FormBuilderPage() {
                       <TableCell className="py-4 text-right pr-4">
                         <div className="flex justify-end gap-2 flex-wrap">
                           <Button size="sm" onClick={() => handleLaunchInspectorViewer(form)} className="bg-[#334155] border border-[#475569] h-8 w-8 p-0 text-[#3b82f6] hover:bg-[#475569] transition-colors"><Eye className="h-4 w-4" /></Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleLaunchDemoTester(form)}
+                            disabled={!form.structure?.fields?.length}
+                            className="bg-[#334155] border border-[#475569] h-8 w-8 p-0 text-emerald-400 hover:bg-[#475569] transition-colors disabled:opacity-40"
+                            title="Test template"
+                          >
+                            <FlaskConical className="h-3.5 w-3.5" />
+                          </Button>
                           <Button size="sm" onClick={() => handleLaunchEditForm(form)} className="bg-[#334155] border border-[#475569] h-8 w-8 p-0 text-white hover:bg-[#475569] transition-colors"><Edit2 className="h-3.5 w-3.5" /></Button>
                           <Button size="sm" onClick={() => handleDeleteFormBlueprintRecord(form.id)} className="bg-rose-950/20 border border-rose-900/40 text-rose-400 hover:bg-rose-900/30 h-8 w-8 p-0 transition-colors"><Trash2 className="h-4 w-4" /></Button>
                         </div>
@@ -485,6 +558,101 @@ export default function FormBuilderPage() {
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* ==========================================
+          VIEW STATE CONTROLLER 4: ADMIN TEMPLATE TESTER
+          ========================================== */}
+      {viewState === 'demo' && demoFormBlueprint && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 border-b border-[#475569]/30 pb-5">
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold font-mono tracking-widest text-emerald-400 bg-emerald-950/30 px-2 py-0.5 rounded uppercase">
+                Admin Demo Mode
+              </span>
+              <h2 className="text-xl font-bold text-white tracking-tight">{demoFormBlueprint.name}</h2>
+              <p className="text-[#94a3b8] text-[11px]">Test the template input flow locally before selecting it in an assignment.</p>
+            </div>
+            <Button
+              type="button"
+              onClick={() => {
+                setViewState('listings');
+                setDemoFormBlueprint(null);
+                setDemoValues({});
+                setDemoErrors({});
+                setDemoResultJson(null);
+              }}
+              className="bg-[#1e293b] border border-[#475569] text-[#cbd5e1] hover:bg-[#334155] hover:text-white h-10 px-4 flex items-center gap-2 font-medium self-start sm:self-center transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" /> Back to Listings
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 items-start">
+            <form onSubmit={handleRunDemoSubmission} className="bg-[#1a1f35] border border-emerald-900/30 rounded-xl p-5 sm:p-6 space-y-6 shadow-2xl">
+              <div className="space-y-1 bg-[#0f172a]/60 p-4 rounded-xl border border-[#475569]/20">
+                <h1 className="text-base font-bold text-white tracking-tight">{demoFormBlueprint.structure?.formName || demoFormBlueprint.name}</h1>
+                <p className="text-slate-400 text-[11px] leading-relaxed">
+                  {demoFormBlueprint.structure?.description || demoFormBlueprint.description || 'No template description configured.'}
+                </p>
+              </div>
+
+              <FormRenderer
+                fields={demoFormBlueprint.structure?.fields ?? []}
+                values={demoValues}
+                onChange={handleDemoValueChange}
+                errors={demoErrors}
+              />
+
+              <div className="flex flex-col sm:flex-row justify-end gap-3 pt-2">
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setDemoValues({});
+                    setDemoErrors({});
+                    setDemoResultJson(null);
+                  }}
+                  className="bg-[#334155] border border-[#475569] text-white text-xs h-10 px-4 transition-colors hover:bg-[#475569]"
+                >
+                  Reset Sample
+                </Button>
+                <Button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold h-10 px-5 border-none">
+                  <FlaskConical className="h-3.5 w-3.5 mr-1.5" /> Run Template Test
+                </Button>
+              </div>
+            </form>
+
+            <div className="space-y-4">
+              <div className="bg-[#111625] border border-[#475569]/40 rounded-xl p-5 shadow-xl space-y-4">
+                <div className="flex items-center gap-2 border-b border-[#475569]/30 pb-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">Demo Payload Preview</h3>
+                </div>
+                <div className="space-y-3 font-mono text-[10px] text-[#cbd5e1]">
+                  <div className="flex justify-between border-b border-[#475569]/10 pb-1.5">
+                    <span className="text-slate-500">TEMPLATE ID:</span>
+                    <span className="text-white font-bold truncate max-w-[180px]">{demoFormBlueprint.id}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-[#475569]/10 pb-1.5">
+                    <span className="text-slate-500">FIELDS:</span>
+                    <span className="text-emerald-400 font-bold">{demoFormBlueprint.structure?.fields?.length ?? 0}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-[#475569]/10 pb-1.5">
+                    <span className="text-slate-500">DB WRITE:</span>
+                    <span className="text-slate-400 font-bold">Disabled</span>
+                  </div>
+                </div>
+                <pre className="text-[10px] font-mono bg-[#090d16] p-3 rounded-lg text-[#86efac] overflow-x-auto leading-relaxed border border-[#475569]/40 max-h-[360px] select-text">
+                  {demoResultJson || JSON.stringify({
+                    mode: 'admin_template_test',
+                    persisted: false,
+                    status: 'Waiting for sample input',
+                  }, null, 2)}
+                </pre>
+              </div>
+            </div>
           </div>
         </div>
       )}

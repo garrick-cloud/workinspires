@@ -10,6 +10,11 @@ services:
       - /app/node_modules
     environment:
       - DATABASE_URL=postgres://myuser:mypassword@db:5432/mydb
+      - MAILTRAP_HOST=sandbox.smtp.mailtrap.io
+      - MAILTRAP_PORT=2525
+      - MAILTRAP_USER=17a38a78677e02
+      - MAILTRAP_PASS=a298a43eec434a
+      - MAILTRAP_FROM=no-reply@workinspires.com
     depends_on:
       db:
         condition: service_healthy
@@ -45,3 +50,4 @@ services:
 
 volumes:
   postgres_data:
+
