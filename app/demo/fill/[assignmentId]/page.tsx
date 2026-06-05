@@ -158,9 +158,9 @@ export default function FillFormPage() {
   return (
     <div className="min-h-screen bg-[#0f172a] text-[#f1f5f9] py-8 px-4">
       <div className="max-w-2xl mx-auto space-y-6">
-        <Link href="/demo" className="inline-flex items-center gap-1.5 text-[#94a3b8] hover:text-white text-sm">
+        {/* <Link href="/demo" className="inline-flex items-center gap-1.5 text-[#94a3b8] hover:text-white text-sm">
           <ArrowLeft className="h-4 w-4" /> Back to published forms
-        </Link>
+        </Link> */}
 
         <div className="space-y-1">
           <h1 className="text-xl font-bold text-white">{form.structure?.formName || form.name}</h1>

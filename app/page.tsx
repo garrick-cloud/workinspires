@@ -50,7 +50,17 @@ interface FormBlueprint {
   };
 }
 interface Assignment { id: string; name: string; formName: string; formBlueprintId?: string; assignedTo: string; dueDate: string; completedText: string; status: 'Enabled' | 'Disabled'; rawDate?: string; published: boolean; publishedAt?: string; }
-interface Submission { id: string; participantName: string; program: string; assignmentName: string; score: number | null; status: 'Completed' | 'In Progress' | 'Pending'; progress: number; }
+interface Submission {
+  id: string;
+  participant_name: string;
+  program: string;
+  assignment_name: string;
+  score: number | null;
+  status: 'Completed' | 'In Progress' | 'Pending';
+  progress: number;
+  created_at: string;
+}
+
 interface Report { id: string; name: string; type: string; generated: string; format: string; size: string; }
 interface Company { id: string; name: string; industry?: string; createdDate: string; status: 'Enabled' | 'Disabled'; }
 interface CollectionFolder { id: string; name: string; description: string; createdDate: string; assignmentIds: string[]; }
@@ -89,19 +99,36 @@ export default function WorkinspiresDashboard() {
   const [forms, setForms] = useState<FormBlueprint[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
+  const [loading, setLoading] = useState(true);
   const [folders, setFolders] = useState<CollectionFolder[]>([]);
+
+  useEffect(() => {
+    if (currentPage === 'reports') {
+      setLoading(true);
+      fetch('/api/submissions') // The endpoint utilizing your pool config
+        .then(res => res.json())
+        .then(data => {
+          setSubmissions(data);
+          setLoading(false);
+        })
+        .catch(err => {
+          console.error(err);
+          setLoading(false);
+        });
+    }
+  }, [currentPage]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadRecords() {
       try {
-        const [companyRows, participantRows, formRows, assignmentRows, settings] = await Promise.all([
+        const [companyRows, participantRows, formRows, assignmentRows, submissionRows, settings] = await Promise.all([
           apiGet<Company[]>('/api/companies'),
           apiGet<Participant[]>('/api/participants'),
           apiGet<FormBlueprint[]>('/api/forms'),
           apiGet<Assignment[]>('/api/assignments'),
+          apiGet<Submission[]>('/api/submissions'),
           apiGet<PlatformSettings>('/api/settings'),
         ]);
 
@@ -111,6 +138,7 @@ export default function WorkinspiresDashboard() {
         setParticipants(participantRows);
         setForms(formRows);
         setAssignments(assignmentRows);
+        setSubmissions(submissionRows);
         setPlatformName(settings.platformName);
         setNotificationsEnabled(settings.notificationsEnabled);
         setAutoReports(settings.autoReports);
@@ -504,28 +532,64 @@ export default function WorkinspiresDashboard() {
     }
   };
 
-  const handleSaveSubmission = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSaveSubmission = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
-    const participantName = data.get('participantName') as string;
+    const participantName = (data.get('participantName') as string || '').trim();
     const program = (data.get('program') as string || '').trim();
     const assignmentName = (data.get('assignmentName') as string || '').trim();
     const scoreRaw = data.get('score') as string;
     const score = scoreRaw !== '' ? parseInt(scoreRaw) : null;
     const status = data.get('status') as 'Completed' | 'In Progress' | 'Pending';
     const progress = status === 'Completed' ? 100 : status === 'Pending' ? 0 : parseInt(data.get('progress') as string) || 0;
+    const adminComment = (data.get('adminComment') as string || '').trim();
+
     if (!participantName || !program || !assignmentName) { alert("Please fill in all required fields."); return; }
-    if (editingSubmission) {
-      setSubmissions(submissions.map(s => s.id === editingSubmission.id ? { ...s, participantName, program, assignmentName, score, status, progress } : s));
-      setEditingSubmission(null);
-    } else {
-      setSubmissions([{ id: `sub_${Date.now()}`, participantName, program, assignmentName, score, status, progress }, ...submissions]);
+
+    try {
+      if (editingSubmission) {
+        const updated = await apiPut<Submission>(`/api/submissions/${editingSubmission.id}`, {
+          ...editingSubmission,
+          participantName,
+          program,
+          assignmentName,
+          score,
+          status,
+          progress,
+          adminComment: adminComment || null,
+        });
+        setSubmissions(submissions.map(s => s.id === editingSubmission.id ? updated : s));
+        setEditingSubmission(null);
+      } else {
+        const created = await apiPost<Submission>('/api/submissions', {
+          id: `sub_${Date.now()}`,
+          participantName,
+          program,
+          assignmentName,
+          score,
+          status,
+          progress,
+          adminComment: adminComment || null,
+        });
+        setSubmissions([created, ...submissions]);
+      }
+      setIsSubmissionOpen(false);
+    } catch (error) {
+      console.error('Failed to save submission:', error);
+      alert('Failed to save submission. Please try again.');
     }
-    setIsSubmissionOpen(false);
   };
 
-  const deleteSubmission = (id: string) => {
-    if (confirm("Remove this result entry?")) setSubmissions(submissions.filter(s => s.id !== id));
+  const deleteSubmission = async (id: string) => {
+    if (confirm("Remove this result entry?")) {
+      try {
+        await apiDelete(`/api/submissions/${id}`);
+        setSubmissions(submissions.filter(s => s.id !== id));
+      } catch (error) {
+        console.error('Failed to delete submission:', error);
+        alert('Failed to delete submission. Please try again.');
+      }
+    }
   };
 
   const handleGenerateReport = (e: React.FormEvent<HTMLFormElement>) => {
@@ -766,6 +830,15 @@ export default function WorkinspiresDashboard() {
                               {!asg.published && (
                                 <Button size="sm" onClick={() => handlePublishAssignment(asg.id)} className="bg-[#10b981]/10 border border-[#10b981]/40 text-[#10b981] hover:bg-[#10b981]/20 h-8 px-2.5 text-[11px] font-bold gap-1">
                                   <Mail className="h-3 w-3" /> Publish
+                                </Button>
+                              )}
+                              {asg.published && (
+                                <Button size="sm" onClick={() => {
+                                  const shareUrl = `${window.location.origin}/demo/fill/${asg.id}`;
+                                  navigator.clipboard.writeText(shareUrl);
+                                  alert('Shareable form link copied to clipboard!');
+                                }} className="bg-[#1e293b] border border-[#3b82f6]/40 text-[#60a5fa] hover:bg-[#334155] h-8 w-8 p-0" title="Copy shareable link">
+                                  <Globe className="h-3.5 w-3.5" />
                                 </Button>
                               )}
                               <Button size="sm" onClick={() => setViewingAssignment(asg)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
@@ -1038,7 +1111,7 @@ export default function WorkinspiresDashboard() {
             </div>
           )}
 
-          {/* REPORTS */}
+         {/* REPORTS */}
           {currentPage === 'reports' && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md">
@@ -1046,36 +1119,60 @@ export default function WorkinspiresDashboard() {
                   <Table className="text-xs min-w-[800px]">
                     <TableHeader className="bg-[#475569]">
                       <TableRow className="border-[#475569] hover:bg-[#475569]">
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Report Name</TableHead>
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Type</TableHead>
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Generated</TableHead>
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Format</TableHead>
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Size</TableHead>
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px] text-right">Actions</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Participant</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Program</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Assignment</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Progress</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Score</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Status</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px] text-right">Submitted At</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {reports.filter(r => globalSearchQuery === '' || matchQuery(r.name) || matchQuery(r.type)).map(rep => (
-                        <TableRow key={rep.id} className="border-b border-[#475569]/30 hover:bg-[#475569]/40">
-                          <TableCell className="font-bold text-white py-4">{rep.name}</TableCell>
-                          <TableCell className="text-[#cbd5e1] py-4">{rep.type}</TableCell>
-                          <TableCell className="text-[#94a3b8] py-4">{rep.generated}</TableCell>
-                          <TableCell className="py-4">
-                            <span className="px-2.5 py-1 rounded-full font-bold text-[11px] uppercase border bg-[#3b82f6]/15 text-[#3b82f6] border-[#3b82f6]/30">{rep.format}</span>
+                      {loading ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">
+                            Loading report logs from database...
                           </TableCell>
-                          <TableCell className="text-[#94a3b8] py-4">{rep.size}</TableCell>
-                          <TableCell className="py-4 text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button size="sm" className="bg-[#334155] border border-[#475569] text-[#10b981] hover:bg-[#475569] h-8 px-3 text-xs gap-1.5">
-                                <Download className="h-3.5 w-3.5" /> Download
-                              </Button>
-                              <Button size="sm" onClick={() => deleteReport(rep.id)} className="bg-rose-950/20 border border-rose-900/50 text-rose-400 hover:bg-rose-900/20 h-8 w-8 p-0"><Trash2 className="h-3.5 w-3.5" /></Button>
+                        </TableRow>
+                      ) : submissions.filter(sub => 
+                        globalSearchQuery === '' || 
+                        sub.participant_name.toLowerCase().includes(globalSearchQuery.toLowerCase()) || 
+                        sub.program.toLowerCase().includes(globalSearchQuery.toLowerCase())
+                      ).map(sub => (
+                        <TableRow key={sub.id} className="border-b border-[#475569]/30 hover:bg-[#475569]/40">
+                          <TableCell className="font-bold text-white py-4">{sub.participant_name}</TableCell>
+                          <TableCell className="text-[#cbd5e1] py-4">{sub.program}</TableCell>
+                          <TableCell className="text-[#cbd5e1] py-4">{sub.assignment_name}</TableCell>
+                          <TableCell className="py-4 text-[#cbd5e1]">
+                            <div className="flex items-center gap-2">
+                              <div className="w-16 bg-[#334155] rounded-full h-1.5 overflow-hidden">
+                                <div className="bg-[#3b82f6] h-1.5" style={{ width: `${sub.progress}%` }}></div>
+                              </div>
+                              <span>{sub.progress}%</span>
                             </div>
+                          </TableCell>
+                          <TableCell className="font-bold text-white py-4">{sub.score !== null ? sub.score : '-'}</TableCell>
+                          <TableCell className="py-4">
+                            <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] uppercase border ${
+                              sub.status === 'Completed' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
+                              sub.status === 'In Progress' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' :
+                              'bg-slate-500/15 text-slate-400 border-slate-500/30'
+                            }`}>
+                              {sub.status}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-[#94a3b8] py-4 text-right">
+                            {new Date(sub.created_at).toLocaleDateString()}
                           </TableCell>
                         </TableRow>
                       ))}
-                      {reports.length === 0 && (
-                        <TableRow><TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">No reports generated yet. Click "Generate Report" to create one.</TableCell></TableRow>
+                      {!loading && submissions.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">
+                            No submissions recorded in the system yet.
+                          </TableCell>
+                        </TableRow>
                       )}
                     </TableBody>
                   </Table>
@@ -1154,7 +1251,7 @@ export default function WorkinspiresDashboard() {
                     { label: 'Form Blueprints', value: forms.length },
                     { label: 'Assignments', value: assignments.length },
                     { label: 'Result Entries', value: submissions.length },
-                    { label: 'Reports', value: reports.length }
+                    // { label: 'Reports', value: reports.length }
                   ].map(d => (
                     <div key={d.label} className="bg-[#0f172a]/40 border border-[#475569]/30 rounded-lg px-4 py-3 flex justify-between items-center">
                       <span className="text-[#94a3b8]">{d.label}</span>
@@ -1243,6 +1340,18 @@ export default function WorkinspiresDashboard() {
                 <div className="bg-[#0f172a]/20 border border-[#475569]/20 p-3 rounded-lg"><span className="text-[10px] text-[#94a3b8] block uppercase mb-1">Due Date</span><p className="text-xs font-bold text-white">{viewingAssignment.dueDate}</p></div>
                 <div className="bg-[#0f172a]/20 border border-[#475569]/20 p-3 rounded-lg"><span className="text-[10px] text-[#94a3b8] block uppercase mb-1">Completed</span><p className="text-xs font-bold text-white">{viewingAssignment.completedText}</p></div>
               </div>
+              {viewingAssignment.published && (
+                <div className="bg-blue-950/20 border border-[#3b82f6]/30 p-3.5 rounded-lg space-y-2">
+                  <span className="text-[10px] text-[#94a3b8] block uppercase">Participant Shareable Link</span>
+                  <div className="flex gap-2">
+                    <Input readOnly value={`${window.location.origin}/demo/fill/${viewingAssignment.id}`} className="bg-[#334155] border-[#475569] text-xs h-9 text-[#60a5fa]" />
+                    <Button size="sm" onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/demo/fill/${viewingAssignment.id}`);
+                      alert('Copied shareable link to clipboard!');
+                    }} className="bg-[#3b82f6] hover:bg-blue-600 text-white text-xs h-9">Copy Link</Button>
+                  </div>
+                </div>
+              )}
               <Button onClick={() => setViewingAssignment(null)} className="w-full bg-[#334155] hover:bg-[#475569]">Close</Button>
             </div>
           )}
@@ -1327,10 +1436,73 @@ export default function WorkinspiresDashboard() {
                   <div className="bg-[#0f172a] rounded-full h-2 overflow-hidden"><div className="h-full rounded-full bg-[#3b82f6]" style={{ width: `${viewingSubmission.progress}%` }} /></div>
                 </div>
                 <div className="flex justify-between pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Status</span><SubmissionStatusBadge status={viewingSubmission.status} /></div>
+                {viewingSubmission.adminComment && (
+                  <div className="pt-3 border-t border-[#475569]/10 space-y-1">
+                    <span className="text-[10px] text-[#94a3b8] block uppercase">Admin Review Notes</span>
+                    <p className="text-xs text-[#cbd5e1] italic bg-[#0f172a]/30 p-3 rounded-lg border border-[#475569]/30 leading-relaxed font-sans">{viewingSubmission.adminComment}</p>
+                    {viewingSubmission.reviewedAt && (
+                      <span className="text-[9px] text-slate-500 block text-right">Reviewed on {new Date(viewingSubmission.reviewedAt).toLocaleString()}</span>
+                    )}
+                  </div>
+                )}
               </div>
               <Button onClick={() => setViewingSubmission(null)} className="w-full bg-[#334155] hover:bg-[#475569]">Close</Button>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* CRUD: Submission */}
+      <Dialog open={isSubmissionOpen} onOpenChange={(open) => { setIsSubmissionOpen(open); if (!open) setEditingSubmission(null); }}>
+        <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-[#475569] text-[#f1f5f9] rounded-xl max-w-[550px] p-8 shadow-2xl">
+          <DialogHeader className="border-b border-[#475569] pb-4 mb-4">
+            <DialogTitle className="text-xl font-bold">
+              {editingSubmission ? 'Edit Submission Review' : 'New Submission Entry'}
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveSubmission} className="space-y-5">
+            <div className="space-y-2">
+              <Label>Participant Name *</Label>
+              <Input name="participantName" required defaultValue={editingSubmission?.participantName || ''} className="bg-[#334155] border-[#475569] h-11 text-white" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Program (Form Template) *</Label>
+                <Input name="program" required defaultValue={editingSubmission?.program || ''} className="bg-[#334155] border-[#475569] h-11 text-white" />
+              </div>
+              <div className="space-y-2">
+                <Label>Assignment Name *</Label>
+                <Input name="assignmentName" required defaultValue={editingSubmission?.assignmentName || ''} className="bg-[#334155] border-[#475569] h-11 text-white" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Score (0-100)</Label>
+                <Input type="number" min={0} max={100} name="score" defaultValue={editingSubmission?.score !== null && editingSubmission?.score !== undefined ? editingSubmission.score : ''} className="bg-[#334155] border-[#475569] h-11 text-white" />
+              </div>
+              <div className="space-y-2">
+                <Label>Status *</Label>
+                <select name="status" required defaultValue={editingSubmission?.status || 'Pending'} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none h-11">
+                  <option value="Pending">Pending</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Completed">Completed</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label>Progress % *</Label>
+                <Input type="number" min={0} max={100} name="progress" defaultValue={editingSubmission?.progress ?? 0} className="bg-[#334155] border-[#475569] h-11 text-white" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Admin Review Comment / Feedback</Label>
+              <textarea name="adminComment" placeholder="Add administrative review notes and qualitative evaluation text..." defaultValue={editingSubmission?.adminComment || ''} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-white min-h-[90px] outline-none" />
+            </div>
+            <DialogFooter>
+              <Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full h-11 font-bold">
+                Save Review Submission
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

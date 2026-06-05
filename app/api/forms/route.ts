@@ -1,76 +1,58 @@
 import pool from '@/lib/db';
 import type { FormBlueprint } from '@/types/form';
+import { parseFormBody, formSelectFields } from '@/lib/form-helpers'; // Created a helper file below
 
 export const dynamic = 'force-dynamic';
 
-const formSelect = `
-  SELECT
-    id,
-    name,
-    type,
-    description,
-    question_count AS "questionCount",
-    max_possible_score AS "maxPossibleScore",
-    structure,
-    status,
-    published,
-    CASE WHEN published_at IS NULL THEN NULL ELSE to_char(published_at, 'Mon DD, YYYY') END AS "publishedAt",
-    to_char(created_at, 'Mon DD, YYYY') AS created
-  FROM form_blueprints
-`;
-
 export async function GET() {
-  const result = await pool.query<FormBlueprint>(`${formSelect} ORDER BY created_at DESC`);
-  return Response.json(result.rows);
+  try {
+    const result = await pool.query<FormBlueprint>(
+      `SELECT ${formSelectFields} FROM form_blueprints ORDER BY created_at DESC`
+    );
+    return Response.json(result.rows);
+  } catch (error) {
+    console.error('Failed to fetch forms:', error);
+    return Response.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  try {
+    const body = await request.json();
 
-  if (!body.name?.trim()) {
-    return Response.json({ error: 'Form name is required.' }, { status: 400 });
+    if (!body.name?.trim()) {
+      return Response.json({ error: 'Form name is required.' }, { status: 400 });
+    }
+
+    const parsed = parseFormBody(body);
+    const id = body.id ?? `form_${Date.now()}`;
+
+    const result = await pool.query<FormBlueprint>(
+      `
+      INSERT INTO form_blueprints (
+        id, name, type, description, question_count, max_possible_score,
+        structure, status, published, published_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
+      RETURNING ${formSelectFields}
+      `,
+      [
+        id,
+        parsed.name,
+        parsed.type,
+        parsed.description,
+        parsed.questionCount,
+        parsed.maxPossibleScore,
+        parsed.structure,
+        parsed.status,
+        parsed.published,
+        parsed.published ? new Date() : null, // Sets current time if creating a published form directly
+      ]
+    );
+
+    return Response.json(result.rows[0], { status: 201 });
+  } catch (error) {
+    console.error('Failed to create form:', error);
+    return Response.json({ error: 'Internal Server Error' }, { status: 500 });
   }
-
-  const fields = body.structure?.fields ?? [];
-  const structure = body.structure ?? {
-    formName: body.name.trim(),
-    description: body.description ?? '',
-    fields,
-  };
-
-  const result = await pool.query<FormBlueprint>(
-    `
-    INSERT INTO form_blueprints (
-      id, name, type, description, question_count, max_possible_score,
-      structure, status, published, published_at
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
-    RETURNING
-      id,
-      name,
-      type,
-      description,
-      question_count AS "questionCount",
-      max_possible_score AS "maxPossibleScore",
-      structure,
-      status,
-      published,
-      CASE WHEN published_at IS NULL THEN NULL ELSE to_char(published_at, 'Mon DD, YYYY') END AS "publishedAt",
-      to_char(created_at, 'Mon DD, YYYY') AS created
-    `,
-    [
-      body.id ?? `form_${Date.now()}`,
-      body.name.trim(),
-      body.type ?? 'Custom Dynamic Form JSON Schema',
-      body.description ?? '',
-      body.questionCount ?? fields.length,
-      body.maxPossibleScore ?? fields.reduce((sum: number, field: { points?: number }) => sum + (Number(field.points) || 0), 0),
-      JSON.stringify(structure),
-      body.status ?? 'Enabled',
-      body.published ?? false,
-      body.publishedAt ? new Date(body.publishedAt) : null,
-    ]
-  );
-
-  return Response.json(result.rows[0], { status: 201 });
 }

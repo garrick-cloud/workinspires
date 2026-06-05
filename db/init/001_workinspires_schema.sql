@@ -74,8 +74,11 @@ CREATE TABLE IF NOT EXISTS submissions (
   score integer,
   status text NOT NULL DEFAULT 'Pending' CHECK (status IN ('Completed', 'In Progress', 'Pending')),
   progress integer NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+  admin_comment text,
+  reviewed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
 
 CREATE TABLE IF NOT EXISTS reports (
   id text PRIMARY KEY DEFAULT gen_random_uuid()::text,

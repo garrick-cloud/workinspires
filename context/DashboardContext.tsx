@@ -21,7 +21,18 @@ export interface Assignment {
   published: boolean;
   publishedAt?: string;
 }
-export interface Submission { id: string; participantName: string; program: string; assignmentName: string; score: number | null; status: 'Completed' | 'In Progress' | 'Pending'; progress: number; }
+export interface Submission {
+  id: string;
+  participantName: string;
+  program: string;
+  assignmentName: string;
+  score: number | null;
+  status: 'Completed' | 'In Progress' | 'Pending';
+  progress: number;
+  adminComment?: string | null;
+  reviewedAt?: string | null;
+  formResponseId?: string | null;
+}
 export interface Report { id: string; name: string; type: string; generated: string; format: string; size: string; }
 export interface Company { id: string; name: string; industry?: string; createdDate: string; status: 'Enabled' | 'Disabled'; }
 export interface CollectionFolder { id: string; name: string; description: string; createdDate: string; assignmentIds: string[]; }
