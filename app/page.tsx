@@ -654,11 +654,11 @@ export default function WorkinspiresDashboard() {
         <Plus className="h-4 w-4" /> New Company
       </button>
     );
-    if (currentPage === 'reports') return (
-      <button className={btnClass} onClick={() => setIsReportOpen(true)}>
-        <Plus className="h-4 w-4" /> Generate Report
-      </button>
-    );
+    // if (currentPage === 'reports') return (
+    //   <button className={btnClass} onClick={() => setIsReportOpen(true)}>
+    //     <Plus className="h-4 w-4" /> Generate Report
+    //   </button>
+    // );
     return null;
   };
 
@@ -1111,65 +1111,77 @@ export default function WorkinspiresDashboard() {
             </div>
           )}
 
-         {/* REPORTS */}
+          {/* REPORTS VIEW PANEL */}
           {currentPage === 'reports' && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md">
+                
+                {/* PANEL HEADER */}
+                <div className="mb-6 pb-6 border-b border-[#475569]/30">
+                  <h3 className="text-base font-bold text-white">Individual Performance Reports</h3>
+                  <p className="text-xs text-[#94a3b8] mt-0.5">Generate and compile customized analytical summaries for isolated participants.</p>
+                </div>
+
+                {/* COMPACT MATRIX LOG TABLE */}
                 <div className="w-full overflow-x-auto rounded-xl border border-[#475569]/20">
-                  <Table className="text-xs min-w-[800px]">
+                  <Table className="text-xs min-w-[850px]">
                     <TableHeader className="bg-[#475569]">
                       <TableRow className="border-[#475569] hover:bg-[#475569]">
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Participant</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Program</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Assignment</TableHead>
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Progress</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Score</TableHead>
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Status</TableHead>
-                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px] text-right">Submitted At</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Submission Date</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px] text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">
+                          <TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">
                             Loading report logs from database...
                           </TableCell>
                         </TableRow>
                       ) : submissions.filter(sub => 
                         globalSearchQuery === '' || 
-                        sub.participant_name.toLowerCase().includes(globalSearchQuery.toLowerCase()) || 
+                        sub.participantName.toLowerCase().includes(globalSearchQuery.toLowerCase()) || 
                         sub.program.toLowerCase().includes(globalSearchQuery.toLowerCase())
                       ).map(sub => (
                         <TableRow key={sub.id} className="border-b border-[#475569]/30 hover:bg-[#475569]/40">
-                          <TableCell className="font-bold text-white py-4">{sub.participant_name}</TableCell>
+                          <TableCell className="font-bold text-white py-4">{sub.participantName}</TableCell>
                           <TableCell className="text-[#cbd5e1] py-4">{sub.program}</TableCell>
-                          <TableCell className="text-[#cbd5e1] py-4">{sub.assignment_name}</TableCell>
-                          <TableCell className="py-4 text-[#cbd5e1]">
-                            <div className="flex items-center gap-2">
-                              <div className="w-16 bg-[#334155] rounded-full h-1.5 overflow-hidden">
-                                <div className="bg-[#3b82f6] h-1.5" style={{ width: `${sub.progress}%` }}></div>
-                              </div>
-                              <span>{sub.progress}%</span>
-                            </div>
+                          <TableCell className="text-[#cbd5e1] py-4">{sub.assignmentName}</TableCell>
+                          <TableCell className="font-bold py-4">
+                            {sub.score !== null ? (
+                              <span className="text-emerald-400">{sub.score} / 100</span>
+                            ) : (
+                              <span className="text-slate-500 italic">Ungraded</span>
+                            )}
                           </TableCell>
-                          <TableCell className="font-bold text-white py-4">{sub.score !== null ? sub.score : '-'}</TableCell>
-                          <TableCell className="py-4">
-                            <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] uppercase border ${
-                              sub.status === 'Completed' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
-                              sub.status === 'In Progress' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' :
-                              'bg-slate-500/15 text-slate-400 border-slate-500/30'
-                            }`}>
-                              {sub.status}
-                            </span>
+                          <TableCell className="text-[#94a3b8] py-4 font-mono">
+                            {sub.reviewedAt ? sub.reviewedAt : '—'}
                           </TableCell>
-                          <TableCell className="text-[#94a3b8] py-4 text-right">
-                            {new Date(sub.created_at).toLocaleDateString()}
+                          
+                          {/* INDIVIDUAL ROW BUTTON EXTENSION */}
+                          <TableCell className="py-4 text-right">
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                alert(`Generating single participant summary report asset for: ${sub.participantName}\nTrack: ${sub.program}`);
+                                // If you want to wire up the pdf tool here later:
+                                // generateIndividualPDF(sub);
+                              }}
+                              className="bg-[#3b82f6] text-white hover:bg-blue-600 font-semibold h-7 px-3 text-[11px] inline-flex items-center gap-1.5 rounded shadow transition-all"
+                            >
+                              <Download className="h-3 w-3" />
+                              Generate Report
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
                       {!loading && submissions.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">
+                          <TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">
                             No submissions recorded in the system yet.
                           </TableCell>
                         </TableRow>
@@ -1632,38 +1644,6 @@ export default function WorkinspiresDashboard() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* CRUD: Generate Report */}
-      <Dialog open={isReportOpen} onOpenChange={setIsReportOpen}>
-        <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-[#475569] text-[#f1f5f9] p-8 rounded-xl max-w-[560px] shadow-2xl">
-          <DialogHeader className="border-b border-[#475569] pb-4 mb-4"><DialogTitle className="text-xl font-bold flex items-center gap-2"><Download className="text-[#3b82f6]" /> Generate Report</DialogTitle></DialogHeader>
-          <form onSubmit={handleGenerateReport} className="space-y-5">
-            <div className="space-y-2"><Label>Report Name *</Label><Input name="name" required placeholder="e.g. Q2 Training Summary" className="bg-[#334155] border-[#475569] h-11 text-white" /></div>
-            <div className="space-y-2">
-              <Label>Report Type *</Label>
-              <select name="type" required defaultValue="" className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                <option value="" disabled>-- Select Type --</option>
-                <option value="Comprehensive">Comprehensive Summary</option>
-                <option value="Progress">Progress Report</option>
-                <option value="Score Analysis">Score Analysis</option>
-                <option value="Participation">Participation Report</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Format</Label>
-              <select name="format" defaultValue="PDF" className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                <option value="PDF">PDF</option>
-                <option value="XLSX">Excel (XLSX)</option>
-                <option value="CSV">CSV</option>
-              </select>
-            </div>
-            <Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full h-11 font-bold flex items-center gap-2 justify-center">
-              <RefreshCw className="h-4 w-4" /> Generate Report
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
     </div>
   );
 }
