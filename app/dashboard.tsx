@@ -4,7 +4,7 @@ import React, { useMemo } from 'react';
 import { Users, CheckCircle, Star, Clock, Home, SlidersHorizontal } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useAppContext } from '@/lib/AppContext';
-import NavigationLayout from '@/components/NavigationLayout';
+import AppLayout from '@/components/AppLayout';
 
 const ResponsiveContainer = dynamic(() => import('recharts').then(m => m.ResponsiveContainer), { ssr: false });
 const LineChart = dynamic(() => import('recharts').then(m => m.LineChart), { ssr: false });
@@ -39,7 +39,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <NavigationLayout currentPage="dashboard" title="Dashboard">
+    <AppLayout currentPage="dashboard" title="Dashboard">
       <div className="space-y-8 duration-300 animate-in fade-in">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {[
@@ -87,6 +87,6 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-    </NavigationLayout>
+    </AppLayout>
   );
 }
