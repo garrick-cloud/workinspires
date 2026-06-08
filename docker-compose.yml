@@ -10,6 +10,8 @@ services:
       - /app/node_modules
     environment:
       - DATABASE_URL=postgres://myuser:mypassword@db:5432/mydb
+      - APP_URL=http://localhost:3000
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
       - MAILTRAP_HOST=sandbox.smtp.mailtrap.io
       - MAILTRAP_PORT=2525
       - MAILTRAP_USER=17a38a78677e02

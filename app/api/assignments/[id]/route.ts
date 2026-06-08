@@ -1,5 +1,7 @@
 import pool from '@/lib/db';
 import type { Assignment } from '@/context/DashboardContext';
+import { ensureTenantSchema } from '@/lib/schema';
+import { slugifyCompany } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,10 +15,30 @@ async function resolveFormBlueprintId(formBlueprintId?: string, formName?: strin
   return result.rows[0]?.id ?? null;
 }
 
+async function resolveCompanySlug(value?: string) {
+  if (!value?.trim()) return 'all-participants';
+
+  await ensureTenantSchema();
+  const normalized = slugifyCompany(value);
+  const result = await pool.query<{ slug: string }>(
+    `
+    SELECT COALESCE(slug, lower(regexp_replace(name, '[^a-zA-Z0-9]+', '-', 'g'))) AS slug
+    FROM companies
+    WHERE COALESCE(slug, lower(regexp_replace(name, '[^a-zA-Z0-9]+', '-', 'g'))) = $1 OR name = $2
+    LIMIT 1
+    `,
+    [normalized, value.trim()]
+  );
+
+  return result.rows[0]?.slug ?? normalized;
+}
+
 export async function PUT(request: Request, ctx: Context) {
+  await ensureTenantSchema();
   const { id } = await ctx.params;
   const body = await request.json();
   const formBlueprintId = await resolveFormBlueprintId(body.formBlueprintId, body.formName);
+  const assignedToSlug = await resolveCompanySlug(body.companySlug ?? body.assignedTo);
 
   if (!body.name?.trim() || !formBlueprintId) {
     return Response.json({ error: 'Assignment name and form are required.' }, { status: 400 });
@@ -43,7 +65,7 @@ export async function PUT(request: Request, ctx: Context) {
       saved.name,
       fb.name AS "formName",
       saved.form_blueprint_id AS "formBlueprintId",
-      saved.assigned_to AS "assignedTo",
+      COALESCE(c.name, saved.assigned_to) AS "assignedTo",
       CASE WHEN saved.due_date IS NULL THEN '' ELSE to_char(saved.due_date, 'Mon DD, YYYY') END AS "dueDate",
       CASE WHEN saved.due_date IS NULL THEN '' ELSE to_char(saved.due_date, 'YYYY-MM-DD') END AS "rawDate",
       concat(saved.completed_count, '/', saved.total_count) AS "completedText",
@@ -52,12 +74,13 @@ export async function PUT(request: Request, ctx: Context) {
       CASE WHEN saved.published_at IS NULL THEN NULL ELSE to_char(saved.published_at, 'Mon DD, YYYY') END AS "publishedAt"
     FROM saved
     JOIN form_blueprints fb ON fb.id = saved.form_blueprint_id
+    LEFT JOIN companies c ON c.slug = saved.assigned_to
     `,
     [
       id,
       body.name.trim(),
       formBlueprintId,
-      body.assignedTo ?? 'All Participants',
+      assignedToSlug,
       body.rawDate || null,
       body.status ?? 'Enabled',
       body.published ?? false,

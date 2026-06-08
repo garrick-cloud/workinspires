@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import type { FormBlueprint } from '@/types/form';
 import type { FormResponse } from '@/types/submission';
 import { apiGet } from '@/lib/apiClient';
@@ -27,14 +28,14 @@ export interface Submission {
   program: string;
   assignmentName: string;
   score: number | null;
-  status: 'Completed' | 'In Progress' | 'Pending';
-  progress: number;
+  status: 'Completed' | 'In Progress' | 'Pending' | 'Not Started' | 'Submitted';
+  progress?: number;
   adminComment?: string | null;
   reviewedAt?: string | null;
   formResponseId?: string | null;
 }
 export interface Report { id: string; name: string; type: string; generated: string; format: string; size: string; }
-export interface Company { id: string; name: string; industry?: string; createdDate: string; status: 'Enabled' | 'Disabled'; }
+export interface Company { id: string; name: string; industry?: string; createdDate: string; status: 'Enabled' | 'Disabled' | 'draft' | 'pilot' | 'active'; }
 export interface CollectionFolder { id: string; name: string; description: string; createdDate: string; assignmentIds: string[]; }
 export interface PlatformSettings { platformName: string; notificationsEnabled: boolean; autoReports: boolean; timezone: string; }
 
@@ -85,7 +86,17 @@ const defaultParticipants: Participant[] = [];
 const defaultSubmissions: Submission[] = [];
 const defaultReports: Report[] = [];
 
+async function safeApiGet<T>(path: string, fallback: T): Promise<T> {
+  try {
+    return await apiGet<T>(path);
+  } catch (error) {
+    console.error(`Failed to load ${path}.`, error);
+    return fallback;
+  }
+}
+
 export function DashboardProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [hydrated, setHydrated] = useState(false);
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
@@ -114,16 +125,30 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
+
+    if (tenantMatch) {
+      setHydrated(true);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     async function loadDashboardData() {
       try {
-        const [companies, participantRows, formRows, assignmentRows, responseRows, settings] = await Promise.all([
-          apiGet<Company[]>('/api/companies'),
-          apiGet<Participant[]>('/api/participants'),
-          apiGet<FormBlueprint[]>('/api/forms'),
-          apiGet<Assignment[]>('/api/assignments'),
-          apiGet<FormResponse[]>('/api/form-responses'),
-          apiGet<PlatformSettings>('/api/settings'),
+        const [companies, participantRows, formRows, assignmentRows, submissionRows, responseRows, settings] = await Promise.all([
+          safeApiGet<Company[]>('/api/companies', []),
+          safeApiGet<Participant[]>('/api/participants', []),
+          safeApiGet<FormBlueprint[]>('/api/forms', []),
+          safeApiGet<Assignment[]>('/api/assignments', []),
+          safeApiGet<Submission[]>('/api/submissions', []),
+          safeApiGet<FormResponse[]>('/api/form-responses', []),
+          safeApiGet<PlatformSettings>('/api/settings', {
+            platformName: 'Workinspires',
+            notificationsEnabled: true,
+            autoReports: false,
+            timezone: 'Asia/Kuala_Lumpur',
+          }),
         ]);
 
         if (cancelled) return;
@@ -132,6 +157,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         setParticipants(participantRows);
         setForms(formRows);
         setAssignments(assignmentRows);
+        setSubmissions(submissionRows);
         setFormResponses(responseRows);
         setPlatformName(settings.platformName);
         setNotificationsEnabled(settings.notificationsEnabled);
@@ -149,7 +175,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pathname]);
 
   return (
     <DashboardContext.Provider value={{

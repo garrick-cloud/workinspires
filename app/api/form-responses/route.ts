@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         formName,
         assignmentName,
         scorePercent,
-        'Completed',
+        'Submitted',
         100,
         submittedAt,
       ]
@@ -150,4 +150,3 @@ export async function POST(request: Request) {
     client.release();
   }
 }
-

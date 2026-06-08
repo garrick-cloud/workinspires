@@ -1,5 +1,7 @@
 import pool from '@/lib/db';
 import type { Participant } from '@/context/DashboardContext';
+import { ensureTenantSchema } from '@/lib/schema';
+import { slugifyCompany } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,16 +20,27 @@ const participantSelect = `
 `;
 
 async function companyIdForName(companyName: string) {
-  const result = await pool.query<{ id: string }>('SELECT id FROM companies WHERE name = $1 LIMIT 1', [companyName]);
+  await ensureTenantSchema();
+  const result = await pool.query<{ id: string }>(
+    `
+    SELECT id
+    FROM companies
+    WHERE name = $1 OR slug = $2
+    LIMIT 1
+    `,
+    [companyName, slugifyCompany(companyName)]
+  );
   return result.rows[0]?.id ?? null;
 }
 
 export async function GET() {
+  await ensureTenantSchema();
   const result = await pool.query<Participant>(`${participantSelect} ORDER BY p.created_at DESC`);
   return Response.json(result.rows);
 }
 
 export async function POST(request: Request) {
+  await ensureTenantSchema();
   const body = await request.json();
 
   if (!body.firstName?.trim() || !body.lastName?.trim() || !body.email?.trim() || !body.company?.trim()) {
@@ -42,8 +55,8 @@ export async function POST(request: Request) {
   const result = await pool.query<Participant>(
     `
     WITH saved AS (
-      INSERT INTO participants (id, first_name, last_name, company_id, department, email, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO participants (id, first_name, last_name, name, company_id, department, email, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     )
     SELECT
@@ -62,6 +75,7 @@ export async function POST(request: Request) {
       body.id ?? `part_${Date.now()}`,
       body.firstName.trim(),
       body.lastName.trim(),
+      `${body.firstName.trim()} ${body.lastName.trim()}`,
       companyId,
       body.department?.trim() || 'General Operations',
       body.email.trim(),

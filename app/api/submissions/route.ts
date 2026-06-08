@@ -1,84 +1,63 @@
 import pool from '@/lib/db';
-import type { Submission } from '@/context/DashboardContext';
+import { assertTenantAccessForRequest } from '@/lib/tenant';
+import { ensureTenantSchema } from '@/lib/schema';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+const submissionSelect = `
+  SELECT
+    s.id,
+    s.assignment_id AS "assignmentId",
+    s.participant_id AS "participantId",
+    s.participant_email AS "participantEmail",
+    s.participant_name AS "participantName",
+    fb.name AS program,
+    a.name AS "assignmentName",
+    s.status,
+    s.answers,
+    s.score,
+    s.reviewed_at AS "reviewedAt",
+    s.created_at AS "createdAt"
+  FROM submissions s
+  JOIN assignments a ON a.id = s.assignment_id
+  JOIN form_blueprints fb ON fb.id = a.form_blueprint_id
+  JOIN participants p ON p.id = s.participant_id
+`;
+
+export async function GET(request: Request) {
   try {
-    const queryText = `
-      SELECT 
-        id,
-        form_response_id AS "formResponseId",
-        participant_name AS "participantName",
-        program,
-        assignment_name AS "assignmentName",
-        score,
-        status,
-        progress,
-        admin_comment AS "adminComment",
-        reviewed_at AS "reviewedAt",
-        created_at AS "createdAt"
-      FROM submissions
-      ORDER BY created_at DESC;
-    `;
+    await ensureTenantSchema();
+    const url = new URL(request.url);
+    const companySlug = url.searchParams.get('companySlug');
+    if (!companySlug) {
+      const result = await pool.query(
+        `
+        ${submissionSelect}
+        ORDER BY s.created_at DESC
+        `
+      );
 
-    const result = await pool.query(queryText);
-    return NextResponse.json(result.rows, { status: 200 });
-  } catch (error) {
-    console.error('Error fetching submission report:', error);
-    return NextResponse.json(
-      { error: 'Internal Server Error' }, 
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-
-    if (!body.participantName?.trim() || !body.program?.trim() || !body.assignmentName?.trim()) {
-      return Response.json({ error: 'Participant name, program, and assignment name are required.' }, { status: 400 });
+      return NextResponse.json(result.rows, { status: 200 });
     }
 
-    const id = body.id ?? `sub_${Date.now()}`;
-    const result = await pool.query<Submission>(
+    const tenant = await assertTenantAccessForRequest(companySlug, request);
+    if (!tenant.allowed || !tenant.company) {
+      return NextResponse.json({ error: tenant.reason }, { status: tenant.company ? 403 : 404 });
+    }
+
+    const result = await pool.query(
       `
-      INSERT INTO submissions (
-        id, form_response_id, participant_name, program,
-        assignment_name, score, status, progress, admin_comment, reviewed_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING
-        id,
-        form_response_id AS "formResponseId",
-        participant_name AS "participantName",
-        program,
-        assignment_name AS "assignmentName",
-        score,
-        status,
-        progress,
-        admin_comment AS "adminComment",
-        reviewed_at AS "reviewedAt"
+      ${submissionSelect}
+      WHERE a.assigned_to = $1 AND p.company_id = $2
+      ORDER BY s.created_at DESC
       `,
-      [
-        id,
-        body.formResponseId || null,
-        body.participantName.trim(),
-        body.program.trim(),
-        body.assignmentName.trim(),
-        body.score !== undefined ? body.score : null,
-        body.status ?? 'Pending',
-        body.progress ?? 0,
-        body.adminComment || null,
-        body.reviewedAt || null,
-      ]
+      [tenant.company.slug, tenant.company.id]
     );
 
-    return Response.json(result.rows[0], { status: 201 });
+    return NextResponse.json(result.rows, { status: 200 });
   } catch (error) {
-    console.error('Failed to create submission:', error);
-    return Response.json({ error: 'Internal Server Error' }, { status: 500 });
+    console.error('Error fetching tenant submissions:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

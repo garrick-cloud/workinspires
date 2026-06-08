@@ -21,11 +21,13 @@ export default function DashboardPage() {
 
   const metrics = useMemo(() => {
     const totalParts = participants.length;
-    const completedCount = submissions.filter(s => s.status === 'Completed').length;
+    const completedCount = submissions.filter(s => s.status === 'Completed' || s.status === 'Submitted').length;
     const completionRate = submissions.length > 0 ? Math.round((completedCount / submissions.length) * 100) : 0;
-    const scores = submissions.filter(s => s.status === 'Completed' && s.score !== null).map(s => s.score as number);
+    const scores = submissions
+      .filter(s => (s.status === 'Completed' || s.status === 'Submitted') && s.score !== null)
+      .map(s => s.score as number);
     const avgScore = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : "0.0";
-    const pendingTasks = submissions.filter(s => s.status !== 'Completed').length;
+    const pendingTasks = submissions.filter(s => s.status !== 'Completed' && s.status !== 'Submitted').length;
     return { totalParts, completionRate, avgScore, pendingTasks };
   }, [participants, submissions]);
 

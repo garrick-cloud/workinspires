@@ -1,5 +1,6 @@
 import pool from '@/lib/db';
-import type { Assignment } from '@/context/DashboardContext';
+import { assertTenantAccessForRequest, generateSubmissionId, slugifyCompany } from '@/lib/tenant';
+import { ensureTenantSchema } from '@/lib/schema';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,15 +10,21 @@ const assignmentSelect = `
     a.name,
     fb.name AS "formName",
     a.form_blueprint_id AS "formBlueprintId",
-    a.assigned_to AS "assignedTo",
+    COALESCE(c.name, a.assigned_to) AS "assignedTo",
     CASE WHEN a.due_date IS NULL THEN '' ELSE to_char(a.due_date, 'Mon DD, YYYY') END AS "dueDate",
     CASE WHEN a.due_date IS NULL THEN '' ELSE to_char(a.due_date, 'YYYY-MM-DD') END AS "rawDate",
-    concat(a.completed_count, '/', a.total_count) AS "completedText",
+    concat(
+      COUNT(s.id) FILTER (WHERE s.status = 'Submitted'),
+      '/',
+      COUNT(s.id)
+    ) AS "completedText",
     a.status,
     a.published,
     CASE WHEN a.published_at IS NULL THEN NULL ELSE to_char(a.published_at, 'Mon DD, YYYY') END AS "publishedAt"
   FROM assignments a
   JOIN form_blueprints fb ON fb.id = a.form_blueprint_id
+  LEFT JOIN companies c ON c.slug = a.assigned_to
+  LEFT JOIN submissions s ON s.assignment_id = a.id
 `;
 
 async function resolveFormBlueprintId(formBlueprintId?: string, formName?: string) {
@@ -28,56 +35,270 @@ async function resolveFormBlueprintId(formBlueprintId?: string, formName?: strin
   return result.rows[0]?.id ?? null;
 }
 
-export async function GET() {
-  const result = await pool.query<Assignment>(`${assignmentSelect} ORDER BY a.created_at DESC`);
+async function resolveCompanySlug(value: string) {
+  await ensureTenantSchema();
+  const normalized = slugifyCompany(value);
+  const result = await pool.query<{ slug: string }>(
+    `
+    SELECT COALESCE(slug, lower(regexp_replace(name, '[^a-zA-Z0-9]+', '-', 'g'))) AS slug
+    FROM companies
+    WHERE COALESCE(slug, lower(regexp_replace(name, '[^a-zA-Z0-9]+', '-', 'g'))) = $1 OR name = $2
+    LIMIT 1
+    `,
+    [normalized, value]
+  );
+
+  return result.rows[0]?.slug ?? normalized;
+}
+
+function getAppUrl(request: Request, requestedAppUrl?: string) {
+  const envUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+  if (envUrl) return envUrl.replace(/\/$/, '');
+  if (requestedAppUrl) return requestedAppUrl.replace(/\/$/, '');
+
+  const forwardedHost = request.headers.get('x-forwarded-host');
+  const host = forwardedHost || request.headers.get('host');
+  if (host) {
+    const protocol = request.headers.get('x-forwarded-proto') || new URL(request.url).protocol.replace(':', '');
+    return `${protocol}://${host}`;
+  }
+
+  return new URL(request.url).origin;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderEvaluationEmail({
+  assignmentName,
+  participantName,
+  dueDate,
+  evaluationUrl,
+}: {
+  assignmentName: string;
+  participantName: string;
+  dueDate: string;
+  evaluationUrl: string;
+}) {
+  const safeAssignmentName = escapeHtml(assignmentName);
+  const safeParticipantName = escapeHtml(participantName || 'Participant');
+  const safeDueDate = escapeHtml(dueDate || 'Open');
+  const safeEvaluationUrl = escapeHtml(evaluationUrl);
+
+  return `
+    <div style="margin:0;padding:0;background:#f3f6fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f6fb;padding:32px 16px;">
+        <tr>
+          <td align="center">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border:1px solid #dbe4f0;border-radius:14px;overflow:hidden;box-shadow:0 12px 28px rgba(15,23,42,0.08);">
+              <tr>
+                <td style="background:#0f172a;padding:24px 28px;">
+                  <div style="font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:#93c5fd;font-weight:700;">WorkInspires</div>
+                  <div style="font-size:22px;line-height:1.35;color:#ffffff;font-weight:700;margin-top:8px;">New evaluation assigned</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:28px;">
+                  <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#334155;">Hello ${safeParticipantName},</p>
+                  <p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:#334155;">You have a private evaluation ready. Use the button below to open your individual form link.</p>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;margin-bottom:24px;">
+                    <tr>
+                      <td style="padding:16px 18px;border-bottom:1px solid #e2e8f0;">
+                        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#64748b;font-weight:700;margin-bottom:5px;">Assignment</div>
+                        <div style="font-size:16px;color:#0f172a;font-weight:700;">${safeAssignmentName}</div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:16px 18px;">
+                        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#64748b;font-weight:700;margin-bottom:5px;">Due date</div>
+                        <div style="font-size:15px;color:#0f172a;font-weight:600;">${safeDueDate}</div>
+                      </td>
+                    </tr>
+                  </table>
+                  <div style="text-align:center;margin:28px 0;">
+                    <a href="${safeEvaluationUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 26px;border-radius:9px;">Open Evaluation</a>
+                  </div>
+                  <p style="margin:0;font-size:12px;line-height:1.6;color:#64748b;">This link is unique to you. Please do not forward it.</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:18px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.5;color:#64748b;">
+                  If the button does not work, copy and paste this link into your browser:<br />
+                  <a href="${safeEvaluationUrl}" style="color:#2563eb;word-break:break-all;">${safeEvaluationUrl}</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
+export async function GET(request: Request) {
+  await ensureTenantSchema();
+  const url = new URL(request.url);
+  const companySlug = url.searchParams.get('companySlug');
+  if (!companySlug) {
+    const result = await pool.query(
+      `
+      ${assignmentSelect}
+      GROUP BY a.id, fb.name, c.name
+      ORDER BY a.created_at DESC
+      `
+    );
+
+    return Response.json(result.rows);
+  }
+
+  const tenant = await assertTenantAccessForRequest(companySlug, request);
+  if (!tenant.allowed || !tenant.company) {
+    return Response.json({ error: tenant.reason }, { status: tenant.company ? 403 : 404 });
+  }
+
+  const result = await pool.query(
+    `
+    ${assignmentSelect}
+    WHERE a.assigned_to = $1
+    GROUP BY a.id, fb.name, c.name
+    ORDER BY a.created_at DESC
+    `,
+    [tenant.company.slug]
+  );
+
   return Response.json(result.rows);
 }
 
 export async function POST(request: Request) {
+  await ensureTenantSchema();
   const body = await request.json();
-  const formBlueprintId = await resolveFormBlueprintId(body.formBlueprintId, body.formName);
+  const targetSlug = await resolveCompanySlug(body.assignedTo ?? body.companySlug ?? '');
+  const tenant = await assertTenantAccessForRequest(targetSlug, request);
 
+  if (!tenant.allowed || !tenant.company) {
+    return Response.json({ error: tenant.reason }, { status: tenant.company ? 403 : 404 });
+  }
+
+  const formBlueprintId = await resolveFormBlueprintId(body.formBlueprintId, body.formName);
   if (!body.name?.trim() || !formBlueprintId) {
     return Response.json({ error: 'Assignment name and form are required.' }, { status: 400 });
   }
 
-  const result = await pool.query<Assignment>(
+  const client = await pool.connect();
+  const assignmentId = body.id ?? `asg_${Date.now()}`;
+
+  try {
+    await client.query('BEGIN');
+
+    const participants = await client.query<{
+      id: string;
+      name: string;
+      email: string;
+    }>(
       `
-      WITH saved AS (
-        INSERT INTO assignments (
-          id, name, form_blueprint_id, assigned_to, due_date,
-          completed_count, total_count, status, published, published_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $9 THEN now() ELSE NULL END)
-        RETURNING *
-      )
       SELECT
-        saved.id,
-        saved.name,
-        fb.name AS "formName",
-        saved.form_blueprint_id AS "formBlueprintId",
-        saved.assigned_to AS "assignedTo",
-        CASE WHEN saved.due_date IS NULL THEN '' ELSE to_char(saved.due_date, 'Mon DD, YYYY') END AS "dueDate",
-        CASE WHEN saved.due_date IS NULL THEN '' ELSE to_char(saved.due_date, 'YYYY-MM-DD') END AS "rawDate",
-        concat(saved.completed_count, '/', saved.total_count) AS "completedText",
-        saved.status,
-        saved.published,
-        CASE WHEN saved.published_at IS NULL THEN NULL ELSE to_char(saved.published_at, 'Mon DD, YYYY') END AS "publishedAt"
-      FROM saved
-      JOIN form_blueprints fb ON fb.id = saved.form_blueprint_id
+        p.id,
+        COALESCE(NULLIF(p.name, ''), concat_ws(' ', p.first_name, p.last_name)) AS name,
+        p.email
+      FROM participants p
+      WHERE p.company_id = $1 AND p.status = 'Enabled'
+      ORDER BY p.created_at ASC
+      `,
+      [tenant.company.id]
+    );
+
+    await client.query(
+      `
+      INSERT INTO assignments (
+        id, name, form_blueprint_id, assigned_to, due_date,
+        completed_count, total_count, status, published, published_at
+      )
+      VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8, CASE WHEN $8 THEN now() ELSE NULL END)
       `,
       [
-        body.id ?? `asg_${Date.now()}`,
+        assignmentId,
         body.name.trim(),
         formBlueprintId,
-        body.assignedTo ?? 'All Participants',
-        body.rawDate || null,
-        body.completedCount ?? 0,
-        body.totalCount ?? 0,
+        tenant.company.slug,
+        body.rawDate || body.dueDate || null,
+        participants.rowCount,
         body.status ?? 'Enabled',
         body.published ?? false,
       ]
     );
 
-  return Response.json(result.rows[0], { status: 201 });
+    const submissionRows = participants.rows.map((participant) => ({
+      id: generateSubmissionId(),
+      assignmentId,
+      participantId: participant.id,
+      participantName: participant.name,
+      participantEmail: participant.email,
+    }));
+
+    if (submissionRows.length > 0) {
+      const values: unknown[] = [];
+      const placeholders = submissionRows.map((row, index) => {
+        const offset = index * 5;
+        values.push(row.id, row.assignmentId, row.participantId, row.participantEmail, row.participantName);
+        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, 'Not Started', '{}'::jsonb)`;
+      });
+
+      await client.query(
+        `
+        INSERT INTO submissions (
+          id, assignment_id, participant_id, participant_email, participant_name, status, answers
+        )
+        VALUES ${placeholders.join(', ')}
+        `,
+        values
+      );
+    }
+
+    const saved = await client.query(
+      `
+      ${assignmentSelect}
+      WHERE a.id = $1 AND a.assigned_to = $2
+      GROUP BY a.id, fb.name, c.name
+      `,
+      [assignmentId, tenant.company.slug]
+    );
+
+    await client.query('COMMIT');
+
+    if (body.published) {
+      const appUrl = getAppUrl(request, body.appUrl);
+      await Promise.allSettled(
+        submissionRows.map((submission) =>
+          fetch(`${appUrl}/api/send-email`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: submission.participantEmail,
+              subject: `New Assignment: ${body.name.trim()}`,
+              html: renderEvaluationEmail({
+                assignmentName: body.name.trim(),
+                participantName: submission.participantName,
+                dueDate: body.rawDate || body.dueDate || 'Open',
+                evaluationUrl: `${appUrl}/submissions/${submission.id}`,
+              }),
+            }),
+          })
+        )
+      );
+    }
+
+    return Response.json({ ...saved.rows[0], submissionsCreated: submissionRows.length }, { status: 201 });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Failed to create assignment engine records:', error);
+    return Response.json({ error: 'Internal Server Error' }, { status: 500 });
+  } finally {
+    client.release();
+  }
 }

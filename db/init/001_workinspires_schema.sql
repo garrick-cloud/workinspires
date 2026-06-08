@@ -3,9 +3,10 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS companies (
   id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
   name text NOT NULL,
+  slug text UNIQUE,
   industry text,
   created_date date NOT NULL DEFAULT CURRENT_DATE,
-  status text NOT NULL DEFAULT 'Enabled' CHECK (status IN ('Enabled', 'Disabled')),
+  status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'pilot', 'active')),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -14,6 +15,7 @@ CREATE TABLE IF NOT EXISTS participants (
   id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
   first_name text NOT NULL,
   last_name text NOT NULL,
+  name text,
   company_id text REFERENCES companies(id) ON DELETE SET NULL,
   department text,
   email text UNIQUE,
@@ -67,16 +69,21 @@ CREATE TABLE IF NOT EXISTS form_responses (
 
 CREATE TABLE IF NOT EXISTS submissions (
   id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  form_response_id text REFERENCES form_responses(id) ON DELETE CASCADE,
+  assignment_id text REFERENCES assignments(id) ON DELETE CASCADE,
+  participant_id text REFERENCES participants(id) ON DELETE CASCADE,
+  participant_email text,
   participant_name text NOT NULL,
-  program text NOT NULL,
-  assignment_name text NOT NULL,
+  answers jsonb NOT NULL DEFAULT '{}'::jsonb,
   score integer,
-  status text NOT NULL DEFAULT 'Pending' CHECK (status IN ('Completed', 'In Progress', 'Pending')),
+  status text NOT NULL DEFAULT 'Not Started' CHECK (status IN ('Not Started', 'In Progress', 'Submitted')),
+  reviewed_at timestamptz,
+  form_response_id text REFERENCES form_responses(id) ON DELETE SET NULL,
+  program text,
+  assignment_name text,
   progress integer NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
   admin_comment text,
-  reviewed_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 
@@ -110,5 +117,9 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 CREATE INDEX IF NOT EXISTS form_blueprints_structure_gin_idx ON form_blueprints USING gin (structure);
 CREATE INDEX IF NOT EXISTS form_responses_answers_gin_idx ON form_responses USING gin (answers);
 CREATE INDEX IF NOT EXISTS assignments_form_blueprint_id_idx ON assignments(form_blueprint_id);
+CREATE INDEX IF NOT EXISTS assignments_assigned_to_idx ON assignments(assigned_to);
 CREATE INDEX IF NOT EXISTS form_responses_assignment_id_idx ON form_responses(assignment_id);
 CREATE INDEX IF NOT EXISTS form_responses_form_blueprint_id_idx ON form_responses(form_blueprint_id);
+CREATE INDEX IF NOT EXISTS participants_company_id_idx ON participants(company_id);
+CREATE INDEX IF NOT EXISTS submissions_assignment_id_idx ON submissions(assignment_id);
+CREATE INDEX IF NOT EXISTS submissions_participant_id_idx ON submissions(participant_id);

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import {
   Participant,
   FormBlueprint,
@@ -10,6 +10,7 @@ import {
   Company,
   CollectionFolder,
 } from '@/lib/models';
+import { apiGet } from '@/lib/apiClient';
 
 interface AppContextType {
   // Data
@@ -99,6 +100,15 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+async function safeApiGet<T>(path: string, fallback: T): Promise<T> {
+  try {
+    return await apiGet<T>(path);
+  } catch (error) {
+    console.error(`Failed to load ${path}.`, error);
+    return fallback;
+  }
+}
+
 export function AppContextProvider({ children }: { children: ReactNode }) {
   // Data
   const [participants, setParticipants] = useState<Participant[]>([
@@ -179,6 +189,34 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [autoReports, setAutoReports] = useState(false);
   const [timezone, setTimezone] = useState('Asia/Kuala_Lumpur');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDatabaseRecords() {
+      const [companyRows, participantRows, formRows, assignmentRows, submissionRows] = await Promise.all([
+        safeApiGet<Company[]>('/api/companies', companies),
+        safeApiGet<Participant[]>('/api/participants', participants),
+        safeApiGet<FormBlueprint[]>('/api/forms', forms),
+        safeApiGet<Assignment[]>('/api/assignments', assignments),
+        safeApiGet<Submission[]>('/api/submissions', submissions),
+      ]);
+
+      if (cancelled) return;
+
+      setCompanies(companyRows);
+      setParticipants(participantRows);
+      setForms(formRows);
+      setAssignments(assignmentRows);
+      setSubmissions(submissionRows);
+    }
+
+    loadDatabaseRecords();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const value: AppContextType = {
     participants, setParticipants,

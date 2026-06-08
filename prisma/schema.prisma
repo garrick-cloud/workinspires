@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CompanyStatus {
+  draft
+  pilot
+  active
+}
+
+enum ParticipantStatus {
+  Enabled
+  Disabled
+}
+
+enum SubmissionStatus {
+  Not_Started @map("Not Started")
+  In_Progress @map("In Progress")
+  Submitted
+}
+
+model Company {
+  id           String        @id @default(uuid())
+  name         String
+  slug         String        @unique
+  status       CompanyStatus @default(draft)
+  participants Participant[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("companies")
+}
+
+model Participant {
+  id        String            @id @default(uuid())
+  companyId String            @map("company_id")
+  company   Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  email     String
+  status    ParticipantStatus @default(Enabled)
+
+  submissions Submission[]
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([companyId, email])
+  @@index([companyId])
+  @@map("participants")
+}
+
+model Assignment {
+  id              String    @id @default(uuid())
+  name            String
+  formBlueprintId String    @map("form_blueprint_id")
+  assignedTo      String    @map("assigned_to")
+  dueDate         DateTime? @map("due_date") @db.Date
+  published       Boolean   @default(false)
+  status          String
+
+  submissions Submission[]
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([assignedTo])
+  @@map("assignments")
+}
+
+model Submission {
+  id               String           @id
+  assignmentId     String           @map("assignment_id")
+  assignment       Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  participantId    String           @map("participant_id")
+  participant      Participant      @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  participantEmail String           @map("participant_email")
+  participantName  String           @map("participant_name")
+  status           SubmissionStatus @default(Not_Started)
+  answers          Json             @default("{}")
+  score            Int?
+  reviewedAt       DateTime?        @map("reviewed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([assignmentId])
+  @@index([participantId])
+  @@map("submissions")
+}

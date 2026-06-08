@@ -1,5 +1,5 @@
 export type Status = 'Enabled' | 'Disabled';
-export type SubmissionStatus = 'Completed' | 'In Progress' | 'Pending';
+export type SubmissionStatus = 'Completed' | 'In Progress' | 'Pending' | 'Not Started' | 'Submitted';
 
 export interface Participant {
   id: string;

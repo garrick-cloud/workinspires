@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { useRouter } from 'next/navigation'; // Added for cross-feature path routing
+import { usePathname, useRouter } from 'next/navigation'; // Added for cross-feature path routing
 import {
   Users, CheckCircle, Star, Clock, Home, ListTodo,
   FileSpreadsheet, BarChart3, Settings, Plus, Search,
@@ -53,25 +53,121 @@ interface FormBlueprint {
 interface Assignment { id: string; name: string; formName: string; formBlueprintId?: string; assignedTo: string; dueDate: string; completedText: string; status: 'Enabled' | 'Disabled'; rawDate?: string; published: boolean; publishedAt?: string; }
 interface Submission {
   id: string;
-  participant_name: string;
+  assignmentId?: string;
+  participantEmail?: string;
+  participantName: string;
   program: string;
-  assignment_name: string;
+  assignmentName: string;
   score: number | null;
-  status: 'Completed' | 'In Progress' | 'Pending';
-  progress: number;
-  created_at: string;
+  status: 'Completed' | 'In Progress' | 'Pending' | 'Not Started' | 'Submitted';
+  progress?: number;
+  createdAt?: string;
+  adminComment?: string | null;
+  reviewedAt?: string | null;
 }
 
 interface Report { id: string; name: string; type: string; generated: string; format: string; size: string; }
-interface Company { id: string; name: string; industry?: string; createdDate: string; status: 'Enabled' | 'Disabled'; }
+interface Company { id: string; name: string; slug?: string; industry?: string; createdDate: string; status: 'Enabled' | 'Disabled' | 'draft' | 'pilot' | 'active'; }
 interface CollectionFolder { id: string; name: string; description: string; createdDate: string; assignmentIds: string[]; }
 interface PlatformSettings { platformName: string; notificationsEnabled: boolean; autoReports: boolean; timezone: string; }
+
+function getClientAppUrl() {
+  const configuredUrl = process.env.NEXT_PUBLIC_APP_URL;
+  const fallbackUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  return (configuredUrl || fallbackUrl).replace(/\/$/, '');
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderEvaluationEmail({
+  assignmentName,
+  participantName,
+  dueDate,
+  evaluationUrl,
+}: {
+  assignmentName: string;
+  participantName: string;
+  dueDate: string;
+  evaluationUrl: string;
+}) {
+  const safeAssignmentName = escapeHtml(assignmentName);
+  const safeParticipantName = escapeHtml(participantName || 'Participant');
+  const safeDueDate = escapeHtml(dueDate || 'Open');
+  const safeEvaluationUrl = escapeHtml(evaluationUrl);
+
+  return `
+    <div style="margin:0;padding:0;background:#f3f6fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f6fb;padding:32px 16px;">
+        <tr>
+          <td align="center">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border:1px solid #dbe4f0;border-radius:14px;overflow:hidden;box-shadow:0 12px 28px rgba(15,23,42,0.08);">
+              <tr>
+                <td style="background:#0f172a;padding:24px 28px;">
+                  <div style="font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:#93c5fd;font-weight:700;">WorkInspires</div>
+                  <div style="font-size:22px;line-height:1.35;color:#ffffff;font-weight:700;margin-top:8px;">New evaluation assigned</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:28px;">
+                  <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#334155;">Hello ${safeParticipantName},</p>
+                  <p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:#334155;">You have a private evaluation ready. Use the button below to open your individual form link.</p>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;margin-bottom:24px;">
+                    <tr>
+                      <td style="padding:16px 18px;border-bottom:1px solid #e2e8f0;">
+                        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#64748b;font-weight:700;margin-bottom:5px;">Assignment</div>
+                        <div style="font-size:16px;color:#0f172a;font-weight:700;">${safeAssignmentName}</div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:16px 18px;">
+                        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#64748b;font-weight:700;margin-bottom:5px;">Due date</div>
+                        <div style="font-size:15px;color:#0f172a;font-weight:600;">${safeDueDate}</div>
+                      </td>
+                    </tr>
+                  </table>
+                  <div style="text-align:center;margin:28px 0;">
+                    <a href="${safeEvaluationUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 26px;border-radius:9px;">Open Evaluation</a>
+                  </div>
+                  <p style="margin:0;font-size:12px;line-height:1.6;color:#64748b;">This link is unique to you. Please do not forward it.</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:18px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.5;color:#64748b;">
+                  If the button does not work, copy and paste this link into your browser:<br />
+                  <a href="${safeEvaluationUrl}" style="color:#2563eb;word-break:break-all;">${safeEvaluationUrl}</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
+async function safeApiGet<T>(path: string, fallback: T): Promise<T> {
+  try {
+    return await apiGet<T>(path);
+  } catch (error) {
+    console.error(`Failed to load ${path}.`, error);
+    return fallback;
+  }
+}
 
 function SubmissionStatusBadge({ status }: { status: Submission['status'] }) {
   const styles: Record<Submission['status'], string> = {
     Completed: 'bg-emerald-950/30 text-emerald-400 border-emerald-900/40',
+    Submitted: 'bg-emerald-950/30 text-emerald-400 border-emerald-900/40',
     'In Progress': 'bg-amber-950/30 text-amber-400 border-amber-900/40',
     Pending: 'bg-slate-900/40 text-slate-400 border-slate-700/50',
+    'Not Started': 'bg-slate-900/40 text-slate-400 border-slate-700/50',
   };
 
   return (
@@ -83,6 +179,7 @@ function SubmissionStatusBadge({ status }: { status: Submission['status'] }) {
 
 export default function WorkinspiresDashboard() {
   const router = useRouter();
+  const pathname = usePathname();
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
 
@@ -105,8 +202,16 @@ export default function WorkinspiresDashboard() {
 
   useEffect(() => {
     if (currentPage === 'reports') {
+      const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
+      const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
+      if (!companySlug) {
+        setSubmissions([]);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
-      fetch('/api/submissions') // The endpoint utilizing your pool config
+      fetch(`/api/submissions?companySlug=${encodeURIComponent(companySlug)}`) // The endpoint utilizing your pool config
         .then(res => res.json())
         .then(data => {
           setSubmissions(data);
@@ -117,20 +222,29 @@ export default function WorkinspiresDashboard() {
           setLoading(false);
         });
     }
-  }, [currentPage]);
+  }, [currentPage, pathname]);
 
   useEffect(() => {
     let cancelled = false;
+    const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
+    const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
 
     async function loadRecords() {
       try {
+        const assignmentPath = companySlug ? `/api/assignments?companySlug=${encodeURIComponent(companySlug)}` : '/api/assignments';
+        const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
         const [companyRows, participantRows, formRows, assignmentRows, submissionRows, settings] = await Promise.all([
-          apiGet<Company[]>('/api/companies'),
-          apiGet<Participant[]>('/api/participants'),
-          apiGet<FormBlueprint[]>('/api/forms'),
-          apiGet<Assignment[]>('/api/assignments'),
-          apiGet<Submission[]>('/api/submissions'),
-          apiGet<PlatformSettings>('/api/settings'),
+          safeApiGet<Company[]>('/api/companies', []),
+          safeApiGet<Participant[]>('/api/participants', []),
+          safeApiGet<FormBlueprint[]>('/api/forms', []),
+          safeApiGet<Assignment[]>(assignmentPath, []),
+          safeApiGet<Submission[]>(submissionPath, []),
+          safeApiGet<PlatformSettings>('/api/settings', {
+            platformName: 'Workinspires',
+            notificationsEnabled: true,
+            autoReports: false,
+            timezone: 'Asia/Kuala_Lumpur',
+          }),
         ]);
 
         if (cancelled) return;
@@ -154,7 +268,7 @@ export default function WorkinspiresDashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pathname]);
 
   // Modal open states
   const [isAssignmentOpen, setIsAssignmentOpen] = useState(false);
@@ -191,7 +305,7 @@ export default function WorkinspiresDashboard() {
   // ==========================================
   // COMPUTED VALUES
   // ==========================================
-  const activeCompaniesOptions = useMemo(() => companiesData.filter(c => c.status === 'Enabled'), [companiesData]);
+  const activeCompaniesOptions = useMemo(() => companiesData.filter(c => c.status === 'Enabled' || c.status === 'active'), [companiesData]);
   const activeFormsOptions = useMemo(() => forms.filter(f => f.status === 'Enabled'), [forms]);
 
   const folderCollectedAssignmentIds = useMemo(() => {
@@ -200,11 +314,13 @@ export default function WorkinspiresDashboard() {
 
   const metrics = useMemo(() => {
     const totalParts = participants.length;
-    const completedCount = submissions.filter(s => s.status === 'Completed').length;
+    const completedCount = submissions.filter(s => s.status === 'Completed' || s.status === 'Submitted').length;
     const completionRate = submissions.length > 0 ? Math.round((completedCount / submissions.length) * 100) : 0;
-    const scores = submissions.filter(s => s.status === 'Completed' && s.score !== null).map(s => s.score as number);
+    const scores = submissions
+      .filter(s => (s.status === 'Completed' || s.status === 'Submitted') && s.score !== null)
+      .map(s => s.score as number);
     const avgScore = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : "0.0";
-    const pendingTasks = submissions.filter(s => s.status !== 'Completed').length;
+    const pendingTasks = submissions.filter(s => s.status !== 'Completed' && s.status !== 'Submitted').length;
     return { totalParts, completionRate, avgScore, pendingTasks };
   }, [participants, submissions]);
 
@@ -216,7 +332,7 @@ export default function WorkinspiresDashboard() {
   }, [companiesData, participants]);
 
   const uniquePrograms = useMemo(() => ['all', ...Array.from(new Set(submissions.map(s => s.program)))], [submissions]);
-  const uniqueStatuses = ['all', 'Completed', 'In Progress', 'Pending'];
+  const uniqueStatuses = ['all', 'Completed', 'Submitted', 'In Progress', 'Pending', 'Not Started'];
 
   const filteredSubmissions = useMemo(() => {
     return submissions
@@ -298,7 +414,7 @@ export default function WorkinspiresDashboard() {
 
 const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish = false) => {
   e.preventDefault();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+  const appUrl = getClientAppUrl();
   const data = new FormData(e.currentTarget);
   const name = (data.get('name') as string || '').trim();
   const formName = data.get('formName') as string;
@@ -309,28 +425,45 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
 
   const targetParticipants = participants.filter(p => p.company === target && p.status === 'Enabled');
   const selectedForm = forms.find(f => f.name === formName);
+  const selectedCompany = companiesData.find(c => c.name === target);
+  const refreshSubmissions = async () => {
+    const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
+    const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
+    const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
+    setSubmissions(await safeApiGet<Submission[]>(submissionPath, submissions));
+  };
 
-  // Helper function to avoid duplicating the email code
-  const triggerEmailNotification = async (assignmentId: string) => {
-    if (targetParticipants.length === 0) return;
-    
-    await fetch("/api/send-email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: targetParticipants.map(p => p.email).join(","),
-        subject: `New Assignment: ${name}`,
-        html: `
-          <h2>New Assignment: ${name}</h2>
-          <p>You have been assigned a new task by your administrator.</p>
-          <p><strong>Due Date:</strong> ${formatDate(date)}</p>
-          <a href="${appUrl}/assignments/${assignmentId}" 
-            style="display:inline-block;padding:10px 20px;background:#3b82f6;color:white;border-radius:6px;text-decoration:none;">
-            View Assignment
-          </a>
-        `,
-      }),
-    });
+  const loadAssignmentSubmissions = async (assignmentId: string) => {
+    const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
+    const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
+    const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
+    const rows = await safeApiGet<Submission[]>(submissionPath, []);
+    return rows.filter((submission) => submission.assignmentId === assignmentId);
+  };
+
+  const sendUniqueSubmissionLinks = async (assignment: Assignment, assignmentName: string, dueDate: string) => {
+    const assignmentSubmissions = await loadAssignmentSubmissions(assignment.id);
+    const emailJobs = assignmentSubmissions
+      .filter((submission) => submission.participantEmail)
+      .map((submission) =>
+        fetch('/api/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: submission.participantEmail,
+            subject: `New Assignment: ${assignmentName}`,
+            html: renderEvaluationEmail({
+              assignmentName,
+              participantName: submission.participantName,
+              dueDate: formatDate(dueDate),
+              evaluationUrl: `${appUrl}/submissions/${submission.id}`,
+            }),
+          }),
+        })
+      );
+
+    await Promise.allSettled(emailJobs);
+    return emailJobs.length;
   };
 
   if (editingAssignment) {
@@ -344,27 +477,28 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
     });
     
     setAssignments(assignments.map(a => a.id === editingAssignment.id ? savedAssignment : a));
+    await refreshSubmissions();
     
     if (nowPublishing) {
-      // FIX: Actually send the email when publishing an edit!
-      await triggerEmailNotification(editingAssignment.id);
-      alert(`Assignment published! Email notifications sent to ${targetParticipants.length} participant(s) at ${target}.`);
+      const sentCount = await sendUniqueSubmissionLinks(savedAssignment, name, date);
+      alert(`Assignment published! Unique evaluation links sent to ${sentCount} participant(s) at ${target}.`);
     }
     setEditingAssignment(null);
   } else {
     const newAsg = await apiPost<Assignment>('/api/assignments', {
       id: `asg_${Date.now()}`, name, formName, assignedTo: target,
+      companySlug: selectedCompany?.slug,
       formBlueprintId: selectedForm?.id,
       rawDate: date,
       totalCount: targetParticipants.length,
       status: "Enabled", published: publish,
+      appUrl,
     });
     
     setAssignments([newAsg, ...assignments]);
+    await refreshSubmissions();
     
-    if (publish) {
-      await triggerEmailNotification(newAsg.id);
-    }
+    if (publish) alert(`Assignment published! Unique evaluation links sent to ${targetParticipants.length} participant(s) at ${target}.`);
   }
   setIsAssignmentOpen(false);
 };
@@ -376,59 +510,32 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
     if (confirm(`Publish "${asg.name}" to ${targetParticipants.length} participant(s) at ${asg.assignedTo}?\n\nThis will send email notifications to:\n${targetParticipants.map(p => `• ${p.name} (${p.email})`).join('\n')}`)) {
       const savedAssignment = await apiPut<Assignment>(`/api/assignments/${id}`, { ...asg, published: true });
       setAssignments(assignments.map(a => a.id === id ? savedAssignment : a));
+      const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
+      const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
+      const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
+      const assignmentSubmissions = (await safeApiGet<Submission[]>(submissionPath, submissions))
+        .filter((submission) => submission.assignmentId === id && submission.participantEmail);
+      const appUrl = getClientAppUrl();
 
-      await fetch("/api/send-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: targetParticipants.map(p => p.email).join(","),
-          subject: `New Assignment: ${asg.name}`,
-          html: `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; padding: 40px 20px; text-align: center;">
-              <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 32px; text-align: left; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-                
-                <div style="margin-bottom: 24px;">
-                  <span style="font-size: 14px; font-weight: 700; color: #3b82f6; text-transform: uppercase; tracking-spacing: 0.05em;">WorkInspires</span>
-                </div>
-
-                <h2 style="font-size: 20px; font-weight: 700; color: #111827; margin: 0 0 12px 0; line-height: 1.4;">
-                  New Assignment: <span style="color: #2563eb;">${asg.name}</span>
-                </h2>
-                
-                <p style="font-size: 15px; color: #4b5563; margin: 0 0 20px 0; line-height: 1.6;">
-                  You have been assigned a new task by your administrator. Please review the details and deadline below to get started.
-                </p>
-
-                <div style="background-color: #f3f4f6; border-radius: 8px; padding: 16px; margin-bottom: 28px;">
-                  <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; font-size: 14px; color: #374151;">
-                    <tr>
-                      <td style="padding-bottom: 4px; color: #6b7280; font-weight: 500; width: 90px;">Task:</td>
-                      <td style="padding-bottom: 4px; font-weight: 600; color: #111827;">${asg.name}</td>
-                    </tr>
-                    <tr>
-                      <td style="color: #6b7280; font-weight: 500;">Due Date:</td>
-                      <td style="font-weight: 600; color: #dc2626;">${asg.dueDate}</td>
-                    </tr>
-                  </table>
-                </div>
-
-                <div style="text-align: center; margin-bottom: 16px;">
-                  <a href="${process.env.NEXT_PUBLIC_APP_URL}/assignments/${id}"
-                    style="display: inline-block; padding: 12px 28px; background-color: #2563eb; color: #ffffff; font-weight: 600; font-size: 15px; border-radius: 8px; text-decoration: none; transition: background-color 0.2s;">
-                    View Assignment
-                  </a>
-                </div>
-
-                <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
-
-                <p style="font-size: 12px; color: #9ca3af; text-align: center; margin: 0;">
-                  This is an automated operational message from WorkInspires.
-                </p>
-              </div>
-            </div>
-          `,
-        }),
-      });
+      await Promise.allSettled(
+        assignmentSubmissions.map((submission) =>
+          fetch('/api/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: submission.participantEmail,
+              subject: `New Assignment: ${asg.name}`,
+              html: renderEvaluationEmail({
+                assignmentName: asg.name,
+                participantName: submission.participantName,
+                dueDate: asg.dueDate,
+                evaluationUrl: `${appUrl}/submissions/${submission.id}`,
+              }),
+            }),
+          })
+        )
+      );
+      setSubmissions(await safeApiGet<Submission[]>(submissionPath, submissions));
     }
   };
 
