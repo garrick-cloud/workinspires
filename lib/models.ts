@@ -42,6 +42,7 @@ export interface Submission {
   score: number | null;
   status: SubmissionStatus;
   progress: number;
+  adminRemark?: string | null;
   adminComment?: string | null;
   reviewedAt?: string | null;
   formResponseId?: string | null;

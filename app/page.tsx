@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation'; // Added for cross-feature path routing
+import { usePathname, useRouter } from 'next/navigation';
 import {
   Users, CheckCircle, Star, Clock, Home, ListTodo,
   FileSpreadsheet, BarChart3, Settings, Plus, Search,
@@ -15,141 +15,25 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/apiClient';
-
-
-import dynamic from 'next/dynamic';
-const ResponsiveContainer = dynamic(() => import('recharts').then(m => m.ResponsiveContainer), { ssr: false });
-const LineChart = dynamic(() => import('recharts').then(m => m.LineChart), { ssr: false });
-const Line = dynamic(() => import('recharts').then(m => m.Line), { ssr: false });
-const BarChart = dynamic(() => import('recharts').then(m => m.BarChart), { ssr: false });
-const Bar = dynamic(() => import('recharts').then(m => m.Bar), { ssr: false });
-const XAxis = dynamic(() => import('recharts').then(m => m.XAxis), { ssr: false });
-const YAxis = dynamic(() => import('recharts').then(m => m.YAxis), { ssr: false });
-const CartesianGrid = dynamic(() => import('recharts').then(m => m.CartesianGrid), { ssr: false });
-const Tooltip = dynamic(() => import('recharts').then(m => m.Tooltip), { ssr: false });
-
-// Removed 'forms' option from local page tracking options block list parameters
-type PageType = 'dashboard' | 'assignments' | 'collections' | 'results' | 'participants' | 'companies' | 'reports' | 'settings';
-
-interface Participant { id: string; name: string; firstName: string; lastName: string; company: string; department: string; email: string; status: 'Enabled' | 'Disabled'; }
-interface FormBlueprint {
-  id: string;
-  name: string;
-  created: string;
-  status: 'Enabled' | 'Disabled';
-  description?: string;
-  googleFormUrl?: string;
-  type?: string;
-  questionCount?: number;
-  maxPossibleScore?: number;
-  published?: boolean;
-  publishedAt?: string;
-  structure?: {
-    formName: string;
-    description: string;
-    fields: unknown[];
-  };
-}
-interface Assignment { id: string; name: string; formName: string; formBlueprintId?: string; assignedTo: string; dueDate: string; completedText: string; status: 'Enabled' | 'Disabled'; rawDate?: string; published: boolean; publishedAt?: string; }
-interface Submission {
-  id: string;
-  assignmentId?: string;
-  participantEmail?: string;
-  participantName: string;
-  program: string;
-  assignmentName: string;
-  score: number | null;
-  status: 'Completed' | 'In Progress' | 'Pending' | 'Not Started' | 'Submitted';
-  progress?: number;
-  createdAt?: string;
-  adminComment?: string | null;
-  reviewedAt?: string | null;
-}
-
-interface Report { id: string; name: string; type: string; generated: string; format: string; size: string; }
-interface Company { id: string; name: string; slug?: string; industry?: string; createdDate: string; status: 'Enabled' | 'Disabled' | 'draft' | 'pilot' | 'active'; }
-interface CollectionFolder { id: string; name: string; description: string; createdDate: string; assignmentIds: string[]; }
-interface PlatformSettings { platformName: string; notificationsEnabled: boolean; autoReports: boolean; timezone: string; }
+import { DashboardOverview } from '@/components/dashboard/DashboardOverview';
+import { renderEvaluationEmail } from '@/lib/evaluationEmail';
+import { generateIndividualPDF } from '@/lib/generateReport';
+import type {
+  Assignment,
+  CollectionFolder,
+  Company,
+  FormBlueprint,
+  PageType,
+  Participant,
+  PlatformSettings,
+  Submission,
+  SubmissionDetail,
+} from '@/lib/dashboardTypes';
 
 function getClientAppUrl() {
   const configuredUrl = process.env.NEXT_PUBLIC_APP_URL;
   const fallbackUrl = typeof window !== 'undefined' ? window.location.origin : '';
   return (configuredUrl || fallbackUrl).replace(/\/$/, '');
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderEvaluationEmail({
-  assignmentName,
-  participantName,
-  dueDate,
-  evaluationUrl,
-}: {
-  assignmentName: string;
-  participantName: string;
-  dueDate: string;
-  evaluationUrl: string;
-}) {
-  const safeAssignmentName = escapeHtml(assignmentName);
-  const safeParticipantName = escapeHtml(participantName || 'Participant');
-  const safeDueDate = escapeHtml(dueDate || 'Open');
-  const safeEvaluationUrl = escapeHtml(evaluationUrl);
-
-  return `
-    <div style="margin:0;padding:0;background:#f3f6fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f6fb;padding:32px 16px;">
-        <tr>
-          <td align="center">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border:1px solid #dbe4f0;border-radius:14px;overflow:hidden;box-shadow:0 12px 28px rgba(15,23,42,0.08);">
-              <tr>
-                <td style="background:#0f172a;padding:24px 28px;">
-                  <div style="font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:#93c5fd;font-weight:700;">WorkInspires</div>
-                  <div style="font-size:22px;line-height:1.35;color:#ffffff;font-weight:700;margin-top:8px;">New evaluation assigned</div>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:28px;">
-                  <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#334155;">Hello ${safeParticipantName},</p>
-                  <p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:#334155;">You have a private evaluation ready. Use the button below to open your individual form link.</p>
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;margin-bottom:24px;">
-                    <tr>
-                      <td style="padding:16px 18px;border-bottom:1px solid #e2e8f0;">
-                        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#64748b;font-weight:700;margin-bottom:5px;">Assignment</div>
-                        <div style="font-size:16px;color:#0f172a;font-weight:700;">${safeAssignmentName}</div>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style="padding:16px 18px;">
-                        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#64748b;font-weight:700;margin-bottom:5px;">Due date</div>
-                        <div style="font-size:15px;color:#0f172a;font-weight:600;">${safeDueDate}</div>
-                      </td>
-                    </tr>
-                  </table>
-                  <div style="text-align:center;margin:28px 0;">
-                    <a href="${safeEvaluationUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 26px;border-radius:9px;">Open Evaluation</a>
-                  </div>
-                  <p style="margin:0;font-size:12px;line-height:1.6;color:#64748b;">This link is unique to you. Please do not forward it.</p>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:18px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.5;color:#64748b;">
-                  If the button does not work, copy and paste this link into your browser:<br />
-                  <a href="${safeEvaluationUrl}" style="color:#2563eb;word-break:break-all;">${safeEvaluationUrl}</a>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-    </div>
-  `;
 }
 
 async function safeApiGet<T>(path: string, fallback: T): Promise<T> {
@@ -204,14 +88,10 @@ export default function WorkinspiresDashboard() {
     if (currentPage === 'reports') {
       const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
       const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
-      if (!companySlug) {
-        setSubmissions([]);
-        setLoading(false);
-        return;
-      }
+      const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
 
       setLoading(true);
-      fetch(`/api/submissions?companySlug=${encodeURIComponent(companySlug)}`) // The endpoint utilizing your pool config
+      fetch(submissionPath)
         .then(res => res.json())
         .then(data => {
           setSubmissions(data);
@@ -274,7 +154,6 @@ export default function WorkinspiresDashboard() {
   const [isAssignmentOpen, setIsAssignmentOpen] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isParticipantOpen, setIsParticipantOpen] = useState(false);
-  const [isReportOpen, setIsReportOpen] = useState(false);
   const [isCompanyOpen, setIsCompanyOpen] = useState(false);
   const [isFolderOpen, setIsFolderOpen] = useState(false);
 
@@ -333,6 +212,7 @@ export default function WorkinspiresDashboard() {
 
   const uniquePrograms = useMemo(() => ['all', ...Array.from(new Set(submissions.map(s => s.program)))], [submissions]);
   const uniqueStatuses = ['all', 'Completed', 'Submitted', 'In Progress', 'Pending', 'Not Started'];
+  const adminRemarkOptions = ['Not Reviewed', 'Reviewed', 'Needs Follow Up', 'Approved', 'Flagged'];
 
   const filteredSubmissions = useMemo(() => {
     return submissions
@@ -340,6 +220,17 @@ export default function WorkinspiresDashboard() {
       .filter(s => statusFilter === 'all' || s.status === statusFilter)
       .filter(s => globalSearchQuery === '' || matchQuery(s.participantName) || matchQuery(s.assignmentName) || matchQuery(s.program));
   }, [submissions, programFilter, statusFilter, globalSearchQuery]);
+
+  const reportSubmissions = useMemo(() => {
+    return submissions
+      .filter(s => s.status === 'Submitted' || s.status === 'Completed')
+      .filter(s =>
+        globalSearchQuery === '' ||
+        matchQuery(s.participantName) ||
+        matchQuery(s.assignmentName) ||
+        matchQuery(s.program)
+      );
+  }, [submissions, globalSearchQuery]);
 
   const trendData = [
     { name: 'Week 1', rate: 45 }, { name: 'Week 2', rate: 52 }, { name: 'Week 3', rate: 58 }, { name: 'Week 4', rate: 65 },
@@ -659,83 +550,43 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
 
   const handleSaveSubmission = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!editingSubmission) return;
+
     const data = new FormData(e.currentTarget);
-    const participantName = (data.get('participantName') as string || '').trim();
-    const program = (data.get('program') as string || '').trim();
-    const assignmentName = (data.get('assignmentName') as string || '').trim();
-    const scoreRaw = data.get('score') as string;
-    const score = scoreRaw !== '' ? parseInt(scoreRaw) : null;
-    const status = data.get('status') as 'Completed' | 'In Progress' | 'Pending';
-    const progress = status === 'Completed' ? 100 : status === 'Pending' ? 0 : parseInt(data.get('progress') as string) || 0;
+    const adminRemark = (data.get('adminRemark') as string || 'Not Reviewed').trim();
     const adminComment = (data.get('adminComment') as string || '').trim();
 
-    if (!participantName || !program || !assignmentName) { alert("Please fill in all required fields."); return; }
-
     try {
-      if (editingSubmission) {
-        const updated = await apiPut<Submission>(`/api/submissions/${editingSubmission.id}`, {
-          ...editingSubmission,
-          participantName,
-          program,
-          assignmentName,
-          score,
-          status,
-          progress,
+      const response = await fetch(`/api/submissions/${editingSubmission.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          adminReview: true,
+          adminRemark,
           adminComment: adminComment || null,
-        });
-        setSubmissions(submissions.map(s => s.id === editingSubmission.id ? updated : s));
-        setEditingSubmission(null);
-      } else {
-        const created = await apiPost<Submission>('/api/submissions', {
-          id: `sub_${Date.now()}`,
-          participantName,
-          program,
-          assignmentName,
-          score,
-          status,
-          progress,
-          adminComment: adminComment || null,
-        });
-        setSubmissions([created, ...submissions]);
-      }
+        }),
+      });
+
+      if (!response.ok) throw new Error(await response.text());
+
+      const updated = await response.json() as Submission;
+      setSubmissions(submissions.map(s => s.id === editingSubmission.id ? { ...s, ...updated } : s));
+      setEditingSubmission(null);
       setIsSubmissionOpen(false);
     } catch (error) {
-      console.error('Failed to save submission:', error);
-      alert('Failed to save submission. Please try again.');
+      console.error('Failed to save admin review:', error);
+      alert('Failed to save admin review. Please try again.');
     }
   };
 
-  const deleteSubmission = async (id: string) => {
-    if (confirm("Remove this result entry?")) {
-      try {
-        await apiDelete(`/api/submissions/${id}`);
-        setSubmissions(submissions.filter(s => s.id !== id));
-      } catch (error) {
-        console.error('Failed to delete submission:', error);
-        alert('Failed to delete submission. Please try again.');
-      }
+  const handleDownloadReport = async (submission: Submission) => {
+    try {
+      const detail = await apiGet<SubmissionDetail>(`/api/submissions/${submission.id}`);
+      generateIndividualPDF(detail);
+    } catch (error) {
+      console.error('Failed to generate submission report.', error);
+      alert('Unable to generate this report. Please try again.');
     }
-  };
-
-  const handleGenerateReport = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
-    const name = (data.get('name') as string || '').trim();
-    const type = data.get('type') as string;
-    const format = (data.get('format') as string) || 'PDF';
-    if (!name || !type) { alert("Please fill in report name and type."); return; }
-    const newReport: Report = {
-      id: `r_${Date.now()}`,
-      name, type,
-      generated: formatDate(new Date().toISOString().split('T')[0]),
-      format, size: `${(Math.random() * 3 + 0.5).toFixed(1)} MB`
-    };
-    setReports([newReport, ...reports]);
-    setIsReportOpen(false);
-  };
-
-  const deleteReport = (id: string) => {
-    if (confirm("Delete this report?")) setReports(reports.filter(r => r.id !== id));
   };
 
   const handleSaveSettings = async () => {
@@ -857,52 +708,7 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
 
           {/* DASHBOARD */}
           {currentPage === 'dashboard' && (
-            <div className="space-y-8 duration-300 animate-in fade-in">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[
-                  { label: 'Total Participants', value: metrics.totalParts, icon: <Users className="h-6 w-6 text-[#3b82f6]" />, sub: 'Unified active directory', subColor: '#10b981' },
-                  { label: 'Completion Rate', value: `${metrics.completionRate}%`, icon: <CheckCircle className="h-6 w-6 text-[#3b82f6]" />, sub: 'Transacted completion sync', subColor: '#10b981' },
-                  { label: 'Average Score', value: metrics.avgScore, icon: <Star className="h-6 w-6 text-[#3b82f6]" />, sub: 'Graded metrics array', subColor: '#10b981' },
-                  { label: 'Pending Tasks', value: metrics.pendingTasks, icon: <Clock className="h-6 w-6 text-[#3b82f6]" />, sub: 'Actions awaiting review', subColor: '#ef4444' }
-                ].map(m => (
-                  <div key={m.label} className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6">
-                    <div className="flex justify-between items-start mb-4"><h3 className="text-[12px] font-semibold text-[#94a3b8] uppercase tracking-wider">{m.label}</h3>{m.icon}</div>
-                    <p className="text-3xl font-bold text-[#3b82f6] mb-2">{m.value}</p>
-                    <p className="text-xs flex items-center gap-1" style={{ color: m.subColor }}><SlidersHorizontal className="h-3 w-3" /> {m.sub}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6">
-                  <h3 className="text-base font-bold text-[#f1f5f9] mb-6 flex items-center gap-2"><SlidersHorizontal className="h-4 w-4" /> Completion Trend</h3>
-                  <div className="h-64 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={trendData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(71,85,105,0.2)" vertical={false} />
-                        <XAxis dataKey="name" stroke="#cbd5e1" fontSize={12} />
-                        <YAxis stroke="#cbd5e1" fontSize={12} unit="%" />
-                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#475569', borderRadius: '8px' }} />
-                        <Line type="monotone" dataKey="rate" stroke="#3b82f6" strokeWidth={3} dot={{ r: 5 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6">
-                  <h3 className="text-base font-bold text-[#f1f5f9] mb-6 flex items-center gap-2"><SlidersHorizontal className="h-4 w-4" /> Score Distribution</h3>
-                  <div className="h-64 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={distData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(71,85,105,0.2)" vertical={false} />
-                        <XAxis dataKey="score" stroke="#cbd5e1" fontSize={12} />
-                        <YAxis stroke="#cbd5e1" fontSize={12} />
-                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#475569', borderRadius: '8px' }} />
-                        <Bar dataKey="count" fill="#3b82f6" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <DashboardOverview metrics={metrics} trendData={trendData} distData={distData} />
           )}
 
           {/* ASSIGNMENTS */}
@@ -1106,6 +912,7 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Score</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px] w-40">Progress</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Status</TableHead>
+                        <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Remark</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px] text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1123,23 +930,23 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                           <TableCell className="py-4 w-40">
                             <div className="flex items-center gap-2">
                               <div className="flex-1 bg-[#0f172a] rounded-full h-1.5 overflow-hidden">
-                                <div className="h-full rounded-full bg-[#3b82f6] transition-all" style={{ width: `${sub.progress}%` }} />
+                                <div className="h-full rounded-full bg-[#3b82f6] transition-all" style={{ width: `${sub.progress ?? (sub.status === 'Submitted' || sub.status === 'Completed' ? 100 : 0)}%` }} />
                               </div>
-                              <span className="text-[10px] text-[#94a3b8] w-7 text-right">{sub.progress}%</span>
+                              <span className="text-[10px] text-[#94a3b8] w-7 text-right">{sub.progress ?? (sub.status === 'Submitted' || sub.status === 'Completed' ? 100 : 0)}%</span>
                             </div>
                           </TableCell>
                           <TableCell className="py-4"><SubmissionStatusBadge status={sub.status} /></TableCell>
+                          <TableCell className="py-4 text-[#cbd5e1]">{sub.adminRemark || 'Not Reviewed'}</TableCell>
                           <TableCell className="py-4 text-right">
                             <div className="flex justify-end gap-2">
                               <Button size="sm" onClick={() => setViewingSubmission(sub)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
                               <Button size="sm" onClick={() => { setEditingSubmission(sub); setIsSubmissionOpen(true); }} className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 w-8 p-0"><Edit2 className="h-3.5 w-3.5" /></Button>
-                              <Button size="sm" onClick={() => deleteSubmission(sub.id)} className="bg-rose-950/20 border border-rose-900/50 text-rose-400 hover:bg-rose-900/20 h-8 w-8 p-0"><Trash2 className="h-3.5 w-3.5" /></Button>
                             </div>
                           </TableCell>
                         </TableRow>
                       ))}
                       {filteredSubmissions.length === 0 && (
-                        <TableRow><TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">No results match the current filters.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={8} className="text-center text-[#94a3b8] py-10">No results match the current filters.</TableCell></TableRow>
                       )}
                     </TableBody>
                   </Table>
@@ -1243,8 +1050,8 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                 
                 {/* PANEL HEADER */}
                 <div className="mb-6 pb-6 border-b border-[#475569]/30">
-                  <h3 className="text-base font-bold text-white">Individual Performance Reports</h3>
-                  <p className="text-xs text-[#94a3b8] mt-0.5">Generate and compile customized analytical summaries for isolated participants.</p>
+                  <h3 className="text-base font-bold text-white">Submitted Participant Reports</h3>
+                  <p className="text-xs text-[#94a3b8] mt-0.5">Generate individual PDF reports from submitted records in the submissions database.</p>
                 </div>
 
                 {/* COMPACT MATRIX LOG TABLE */}
@@ -1267,11 +1074,7 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                             Loading report logs from database...
                           </TableCell>
                         </TableRow>
-                      ) : submissions.filter(sub => 
-                        globalSearchQuery === '' || 
-                        sub.participantName.toLowerCase().includes(globalSearchQuery.toLowerCase()) || 
-                        sub.program.toLowerCase().includes(globalSearchQuery.toLowerCase())
-                      ).map(sub => (
+                      ) : reportSubmissions.map(sub => (
                         <TableRow key={sub.id} className="border-b border-[#475569]/30 hover:bg-[#475569]/40">
                           <TableCell className="font-bold text-white py-4">{sub.participantName}</TableCell>
                           <TableCell className="text-[#cbd5e1] py-4">{sub.program}</TableCell>
@@ -1300,10 +1103,10 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                           </TableCell>
                         </TableRow>
                       ))}
-                      {!loading && submissions.length === 0 && (
+                      {!loading && reportSubmissions.length === 0 && (
                         <TableRow>
                           <TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">
-                            No submissions recorded in the system yet.
+                            No submitted participant records are ready for reports yet.
                           </TableCell>
                         </TableRow>
                       )}
@@ -1565,14 +1368,15 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                 <div className="flex justify-between"><span className="text-[#94a3b8]">Assignment</span><span className="font-bold text-white">{viewingSubmission.assignmentName}</span></div>
                 <div className="flex justify-between pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Score</span><span className="font-bold text-[#3b82f6]">{viewingSubmission.score !== null ? `${viewingSubmission.score}/100` : '—'}</span></div>
                 <div className="pt-2 border-t border-[#475569]/10 space-y-2">
-                  <div className="flex justify-between"><span className="text-[#94a3b8]">Progress</span><span className="font-bold text-white">{viewingSubmission.progress}%</span></div>
-                  <div className="bg-[#0f172a] rounded-full h-2 overflow-hidden"><div className="h-full rounded-full bg-[#3b82f6]" style={{ width: `${viewingSubmission.progress}%` }} /></div>
+                  <div className="flex justify-between"><span className="text-[#94a3b8]">Progress</span><span className="font-bold text-white">{viewingSubmission.progress ?? (viewingSubmission.status === 'Submitted' || viewingSubmission.status === 'Completed' ? 100 : 0)}%</span></div>
+                  <div className="bg-[#0f172a] rounded-full h-2 overflow-hidden"><div className="h-full rounded-full bg-[#3b82f6]" style={{ width: `${viewingSubmission.progress ?? (viewingSubmission.status === 'Submitted' || viewingSubmission.status === 'Completed' ? 100 : 0)}%` }} /></div>
                 </div>
                 <div className="flex justify-between pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Status</span><SubmissionStatusBadge status={viewingSubmission.status} /></div>
-                {viewingSubmission.adminComment && (
+                <div className="flex justify-between pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Admin Remark</span><span className="font-bold text-white">{viewingSubmission.adminRemark || 'Not Reviewed'}</span></div>
+                {(viewingSubmission.adminComment || viewingSubmission.adminRemark) && (
                   <div className="pt-3 border-t border-[#475569]/10 space-y-1">
                     <span className="text-[10px] text-[#94a3b8] block uppercase">Admin Review Notes</span>
-                    <p className="text-xs text-[#cbd5e1] italic bg-[#0f172a]/30 p-3 rounded-lg border border-[#475569]/30 leading-relaxed font-sans">{viewingSubmission.adminComment}</p>
+                    <p className="text-xs text-[#cbd5e1] italic bg-[#0f172a]/30 p-3 rounded-lg border border-[#475569]/30 leading-relaxed font-sans">{viewingSubmission.adminComment || 'No written review added.'}</p>
                     {viewingSubmission.reviewedAt && (
                       <span className="text-[9px] text-slate-500 block text-right">Reviewed on {new Date(viewingSubmission.reviewedAt).toLocaleString()}</span>
                     )}
@@ -1585,54 +1389,45 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
         </DialogContent>
       </Dialog>
 
-      {/* CRUD: Submission */}
+      {/* REVIEW: Submission */}
       <Dialog open={isSubmissionOpen} onOpenChange={(open) => { setIsSubmissionOpen(open); if (!open) setEditingSubmission(null); }}>
         <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-[#475569] text-[#f1f5f9] rounded-xl max-w-[550px] p-8 shadow-2xl">
           <DialogHeader className="border-b border-[#475569] pb-4 mb-4">
             <DialogTitle className="text-xl font-bold">
-              {editingSubmission ? 'Edit Submission Review' : 'New Submission Entry'}
+              Admin Review
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSaveSubmission} className="space-y-5">
+            {editingSubmission && (
+              <div className="bg-[#0f172a]/30 border border-[#475569]/30 rounded-xl p-4 space-y-3 text-sm">
+                {[
+                  ['Participant', editingSubmission.participantName],
+                  ['Program', editingSubmission.program],
+                  ['Assignment', editingSubmission.assignmentName],
+                  ['Status', editingSubmission.status],
+                  ['Score', editingSubmission.score !== null ? `${editingSubmission.score}/100` : 'Ungraded'],
+                  ['Progress', `${editingSubmission.progress ?? (editingSubmission.status === 'Submitted' || editingSubmission.status === 'Completed' ? 100 : 0)}%`],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between gap-4 border-b border-[#475569]/10 pb-2 last:border-0 last:pb-0">
+                    <span className="text-[#94a3b8]">{label}</span>
+                    <span className="font-semibold text-white text-right">{value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="space-y-2">
-              <Label>Participant Name *</Label>
-              <Input name="participantName" required defaultValue={editingSubmission?.participantName || ''} className="bg-[#334155] border-[#475569] h-11 text-white" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Program (Form Template) *</Label>
-                <Input name="program" required defaultValue={editingSubmission?.program || ''} className="bg-[#334155] border-[#475569] h-11 text-white" />
-              </div>
-              <div className="space-y-2">
-                <Label>Assignment Name *</Label>
-                <Input name="assignmentName" required defaultValue={editingSubmission?.assignmentName || ''} className="bg-[#334155] border-[#475569] h-11 text-white" />
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label>Score (0-100)</Label>
-                <Input type="number" min={0} max={100} name="score" defaultValue={editingSubmission?.score !== null && editingSubmission?.score !== undefined ? editingSubmission.score : ''} className="bg-[#334155] border-[#475569] h-11 text-white" />
-              </div>
-              <div className="space-y-2">
-                <Label>Status *</Label>
-                <select name="status" required defaultValue={editingSubmission?.status || 'Pending'} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none h-11">
-                  <option value="Pending">Pending</option>
-                  <option value="In Progress">In Progress</option>
-                  <option value="Completed">Completed</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Progress % *</Label>
-                <Input type="number" min={0} max={100} name="progress" defaultValue={editingSubmission?.progress ?? 0} className="bg-[#334155] border-[#475569] h-11 text-white" />
-              </div>
+              <Label>Remark *</Label>
+              <select name="adminRemark" required defaultValue={editingSubmission?.adminRemark || 'Not Reviewed'} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none h-11">
+                {adminRemarkOptions.map((remark) => <option key={remark} value={remark}>{remark}</option>)}
+              </select>
             </div>
             <div className="space-y-2">
-              <Label>Admin Review Comment / Feedback</Label>
-              <textarea name="adminComment" placeholder="Add administrative review notes and qualitative evaluation text..." defaultValue={editingSubmission?.adminComment || ''} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-white min-h-[90px] outline-none" />
+              <Label>Admin Review Notes</Label>
+              <textarea name="adminComment" placeholder="Add internal review notes. This does not change participant submission data." defaultValue={editingSubmission?.adminComment || ''} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-white min-h-[110px] outline-none" />
             </div>
             <DialogFooter>
               <Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full h-11 font-bold">
-                Save Review Submission
+                Save Admin Review
               </Button>
             </DialogFooter>
           </form>

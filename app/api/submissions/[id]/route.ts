@@ -15,6 +15,9 @@ const submissionDetailSelect = `
     s.status,
     s.answers,
     s.score,
+    s.progress,
+    s.admin_remark AS "adminRemark",
+    s.admin_comment AS "adminComment",
     s.reviewed_at AS "reviewedAt",
     a.name AS "assignmentName",
     a.due_date AS "dueDate",
@@ -48,6 +51,41 @@ export async function PATCH(request: Request, ctx: Context) {
     await ensureTenantSchema();
     const { id } = await ctx.params;
     const body = await request.json();
+
+    if (body.adminReview) {
+      const result = await pool.query(
+        `
+        UPDATE submissions
+        SET
+          admin_remark = $2,
+          admin_comment = $3,
+          updated_at = now()
+        WHERE id = $1
+        RETURNING
+          id,
+          assignment_id AS "assignmentId",
+          participant_id AS "participantId",
+          participant_email AS "participantEmail",
+          participant_name AS "participantName",
+          status,
+          answers,
+          score,
+          progress,
+          admin_remark AS "adminRemark",
+          admin_comment AS "adminComment",
+          reviewed_at AS "reviewedAt",
+          updated_at AS "updatedAt"
+        `,
+        [id, body.adminRemark || 'Not Reviewed', body.adminComment || null]
+      );
+
+      if (result.rowCount === 0) {
+        return Response.json({ error: 'Submission not found.' }, { status: 404 });
+      }
+
+      return Response.json(result.rows[0]);
+    }
+
     const answers = body.answers ?? {};
     const score = body.score !== undefined && body.score !== null ? Number(body.score) : null;
 

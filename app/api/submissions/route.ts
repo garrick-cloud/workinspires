@@ -17,6 +17,9 @@ const submissionSelect = `
     s.status,
     s.answers,
     s.score,
+    s.progress,
+    s.admin_remark AS "adminRemark",
+    s.admin_comment AS "adminComment",
     s.reviewed_at AS "reviewedAt",
     s.created_at AS "createdAt"
   FROM submissions s

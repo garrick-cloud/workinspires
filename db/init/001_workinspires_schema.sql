@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   program text,
   assignment_name text,
   progress integer NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+  admin_remark text NOT NULL DEFAULT 'Not Reviewed',
   admin_comment text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()

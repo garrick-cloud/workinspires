@@ -54,6 +54,8 @@ export async function ensureTenantSchema() {
       ALTER TABLE submissions ADD COLUMN IF NOT EXISTS program text;
       ALTER TABLE submissions ADD COLUMN IF NOT EXISTS assignment_name text;
       ALTER TABLE submissions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+      ALTER TABLE submissions ADD COLUMN IF NOT EXISTS admin_remark text NOT NULL DEFAULT 'Not Reviewed';
+      ALTER TABLE submissions ADD COLUMN IF NOT EXISTS admin_comment text;
 
       ALTER TABLE submissions ALTER COLUMN program DROP NOT NULL;
       ALTER TABLE submissions ALTER COLUMN assignment_name DROP NOT NULL;
