@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/apiClient';
 
+
 import dynamic from 'next/dynamic';
 const ResponsiveContainer = dynamic(() => import('recharts').then(m => m.ResponsiveContainer), { ssr: false });
 const LineChart = dynamic(() => import('recharts').then(m => m.LineChart), { ssr: false });
@@ -295,61 +296,78 @@ export default function WorkinspiresDashboard() {
     }
   };
 
-  const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish = false) => {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
-    const name = (data.get('name') as string || '').trim();
-    const formName = data.get('formName') as string;
-    const target = data.get('target') as string;
-    const date = data.get('date') as string;
-    const status = (data.get('status') as 'Enabled' | 'Disabled') || 'Enabled';
-    if (!name || !formName || !target || !date) { alert("Please fill in all required fields."); return; }
+const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish = false) => {
+  e.preventDefault();
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+  const data = new FormData(e.currentTarget);
+  const name = (data.get('name') as string || '').trim();
+  const formName = data.get('formName') as string;
+  const target = data.get('target') as string;
+  const date = data.get('date') as string;
+  const status = (data.get('status') as 'Enabled' | 'Disabled') || 'Enabled';
+  if (!name || !formName || !target || !date) { alert("Please fill in all required fields."); return; }
 
-    const targetParticipants = participants.filter(p => p.company === target && p.status === 'Enabled');
-    const selectedForm = forms.find(f => f.name === formName);
+  const targetParticipants = participants.filter(p => p.company === target && p.status === 'Enabled');
+  const selectedForm = forms.find(f => f.name === formName);
 
-    if (editingAssignment) {
-      const wasPublished = editingAssignment.published;
-      const nowPublishing = publish && !wasPublished;
-      const savedAssignment = await apiPut<Assignment>(`/api/assignments/${editingAssignment.id}`, {
-        ...editingAssignment, name, formName, formBlueprintId: editingAssignment.formBlueprintId ?? selectedForm?.id, assignedTo: target,
-        dueDate: date.includes('-') ? formatDate(date) : date, rawDate: date, status,
-        published: publish || wasPublished,
-      });
-      setAssignments(assignments.map(a => a.id === editingAssignment.id ? savedAssignment : a));
-      if (nowPublishing) alert(`Assignment published! Email notifications sent to ${targetParticipants.length} participant(s) at ${target}.`);
-      setEditingAssignment(null);
-    } else {
-      const newAsg = await apiPost<Assignment>('/api/assignments', {
-        id: `asg_${Date.now()}`, name, formName, assignedTo: target,
-        formBlueprintId: selectedForm?.id,
-        rawDate: date,
-        totalCount: targetParticipants.length,
-        status: "Enabled", published: publish,
-      });
-      setAssignments([newAsg, ...assignments]);
-      if (publish) {
-        await fetch("/api/send-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: targetParticipants.map(p => p.email).join(","),
-            subject: `New Assignment: ${name}`,
-            html: `
-              <h2>New Assignment: ${name}</h2>
-              <p>You have been assigned a new task by your administrator.</p>
-              <p><strong>Due Date:</strong> ${formatDate(date)}</p>
-              <a href="${process.env.NEXT_PUBLIC_APP_URL}/assignments/${newAsg.id}" 
-                style="display:inline-block;padding:10px 20px;background:#3b82f6;color:white;border-radius:6px;text-decoration:none;">
-                View Assignment
-              </a>
-            `,
-          }),
-        });
-      }
-    }
-    setIsAssignmentOpen(false);
+  // Helper function to avoid duplicating the email code
+  const triggerEmailNotification = async (assignmentId: string) => {
+    if (targetParticipants.length === 0) return;
+    
+    await fetch("/api/send-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: targetParticipants.map(p => p.email).join(","),
+        subject: `New Assignment: ${name}`,
+        html: `
+          <h2>New Assignment: ${name}</h2>
+          <p>You have been assigned a new task by your administrator.</p>
+          <p><strong>Due Date:</strong> ${formatDate(date)}</p>
+          <a href="${appUrl}/assignments/${assignmentId}" 
+            style="display:inline-block;padding:10px 20px;background:#3b82f6;color:white;border-radius:6px;text-decoration:none;">
+            View Assignment
+          </a>
+        `,
+      }),
+    });
   };
+
+  if (editingAssignment) {
+    const wasPublished = editingAssignment.published;
+    const nowPublishing = publish && !wasPublished;
+    
+    const savedAssignment = await apiPut<Assignment>(`/api/assignments/${editingAssignment.id}`, {
+      ...editingAssignment, name, formName, formBlueprintId: editingAssignment.formBlueprintId ?? selectedForm?.id, assignedTo: target,
+      dueDate: date.includes('-') ? formatDate(date) : date, rawDate: date, status,
+      published: publish || wasPublished,
+    });
+    
+    setAssignments(assignments.map(a => a.id === editingAssignment.id ? savedAssignment : a));
+    
+    if (nowPublishing) {
+      // FIX: Actually send the email when publishing an edit!
+      await triggerEmailNotification(editingAssignment.id);
+      alert(`Assignment published! Email notifications sent to ${targetParticipants.length} participant(s) at ${target}.`);
+    }
+    setEditingAssignment(null);
+  } else {
+    const newAsg = await apiPost<Assignment>('/api/assignments', {
+      id: `asg_${Date.now()}`, name, formName, assignedTo: target,
+      formBlueprintId: selectedForm?.id,
+      rawDate: date,
+      totalCount: targetParticipants.length,
+      status: "Enabled", published: publish,
+    });
+    
+    setAssignments([newAsg, ...assignments]);
+    
+    if (publish) {
+      await triggerEmailNotification(newAsg.id);
+    }
+  }
+  setIsAssignmentOpen(false);
+};
 
   const handlePublishAssignment = async (id: string) => {
     const asg = assignments.find(a => a.id === id);
@@ -1166,11 +1184,7 @@ export default function WorkinspiresDashboard() {
                           <TableCell className="py-4 text-right">
                             <Button
                               size="sm"
-                              onClick={() => {
-                                alert(`Generating single participant summary report asset for: ${sub.participantName}\nTrack: ${sub.program}`);
-                                // If you want to wire up the pdf tool here later:
-                                // generateIndividualPDF(sub);
-                              }}
+                              onClick={() => handleDownloadReport(sub)}
                               className="bg-[#3b82f6] text-white hover:bg-blue-600 font-semibold h-7 px-3 text-[11px] inline-flex items-center gap-1.5 rounded shadow transition-all"
                             >
                               <Download className="h-3 w-3" />
