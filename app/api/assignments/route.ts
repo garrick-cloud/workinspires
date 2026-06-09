@@ -2,6 +2,7 @@ import pool from '@/lib/db';
 import { assertTenantAccessForRequest, generateSubmissionId, slugifyCompany } from '@/lib/tenant';
 import { ensureTenantSchema } from '@/lib/schema';
 import { renderEvaluationEmail } from '@/lib/evaluationEmail';
+import { sendMail } from '@/lib/mailer';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,6 +68,50 @@ function getAppUrl(request: Request, requestedAppUrl?: string) {
   return new URL(request.url).origin;
 }
 
+type AssignmentSubmissionEmail = {
+  id: string;
+  participantName: string;
+  participantEmail: string | null;
+};
+
+async function sendAssignmentEmails({
+  submissions,
+  appUrl,
+  assignmentName,
+  dueDate,
+}: {
+  submissions: AssignmentSubmissionEmail[];
+  appUrl: string;
+  assignmentName: string;
+  dueDate: string;
+}) {
+  let emailsSent = 0;
+  const emailFailures: string[] = [];
+
+  for (const submission of submissions) {
+    if (!submission.participantEmail) continue;
+
+    try {
+      await sendMail({
+        to: submission.participantEmail,
+        subject: `New Assignment: ${assignmentName}`,
+        html: renderEvaluationEmail({
+          assignmentName,
+          participantName: submission.participantName,
+          dueDate,
+          evaluationUrl: `${appUrl}/submissions/${submission.id}`,
+        }),
+      });
+      emailsSent += 1;
+    } catch (error) {
+      console.error(`Failed to send assignment email to ${submission.participantEmail}:`, error);
+      emailFailures.push(submission.participantEmail);
+    }
+  }
+
+  return { emailsSent, emailFailures };
+}
+
 export async function GET(request: Request) {
   await ensureTenantSchema();
   const url = new URL(request.url);
@@ -104,7 +149,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   await ensureTenantSchema();
   const body = await request.json();
-  const targetSlug = await resolveCompanySlug(body.assignedTo ?? body.companySlug ?? '');
+  const targetSlug = await resolveCompanySlug(body.companySlug ?? body.assignedTo ?? '');
   const tenant = await assertTenantAccessForRequest(targetSlug, request);
 
   if (!tenant.allowed || !tenant.company) {
@@ -125,7 +170,7 @@ export async function POST(request: Request) {
     const participants = await client.query<{
       id: string;
       name: string;
-      email: string;
+      email: string | null;
     }>(
       `
       SELECT
@@ -197,29 +242,25 @@ export async function POST(request: Request) {
 
     await client.query('COMMIT');
 
+    let emailsSent = 0;
+    let emailFailures: string[] = [];
+
     if (body.published) {
       const appUrl = getAppUrl(request, body.appUrl);
-      await Promise.allSettled(
-        submissionRows.map((submission) =>
-          fetch(`${appUrl}/api/send-email`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: submission.participantEmail,
-              subject: `New Assignment: ${body.name.trim()}`,
-              html: renderEvaluationEmail({
-                assignmentName: body.name.trim(),
-                participantName: submission.participantName,
-                dueDate: body.rawDate || body.dueDate || 'Open',
-                evaluationUrl: `${appUrl}/submissions/${submission.id}`,
-              }),
-            }),
-          })
-        )
-      );
+      const emailResult = await sendAssignmentEmails({
+        submissions: submissionRows,
+        appUrl,
+        assignmentName: body.name.trim(),
+        dueDate: body.rawDate || body.dueDate || 'Open',
+      });
+      emailsSent = emailResult.emailsSent;
+      emailFailures = emailResult.emailFailures;
     }
 
-    return Response.json({ ...saved.rows[0], submissionsCreated: submissionRows.length }, { status: 201 });
+    return Response.json(
+      { ...saved.rows[0], submissionsCreated: submissionRows.length, emailsSent, emailFailures },
+      { status: 201 }
+    );
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Failed to create assignment engine records:', error);

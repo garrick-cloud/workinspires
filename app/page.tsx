@@ -14,9 +14,11 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/apiClient';
 import { DashboardOverview } from '@/components/dashboard/DashboardOverview';
-import { renderEvaluationEmail } from '@/lib/evaluationEmail';
 import { generateIndividualPDF } from '@/lib/generateReport';
 import type {
   Assignment,
@@ -30,10 +32,96 @@ import type {
   SubmissionDetail,
 } from '@/lib/dashboardTypes';
 
+type DashboardSelectOption = {
+  value: string;
+  label: string;
+  disabled?: boolean;
+};
+
+type NormalizedSubmissionAnswer = {
+  label: string;
+  value: unknown;
+  pointsEarned?: number;
+};
+
+type AssignmentSaveResult = Assignment & {
+  submissionsCreated?: number;
+  emailsSent?: number;
+  emailFailures?: string[];
+};
+
+function DashboardSelect({
+  name,
+  value,
+  defaultValue,
+  onValueChange,
+  placeholder = "Select option",
+  options,
+  className = "w-full bg-[#334155] border-[#475569] text-[#f1f5f9] h-11 rounded-lg",
+  size = "default",
+  required,
+}: {
+  name?: string;
+  value?: string;
+  defaultValue?: string;
+  onValueChange?: (value: string) => void;
+  placeholder?: string;
+  options: DashboardSelectOption[];
+  className?: string;
+  size?: "sm" | "default";
+  required?: boolean;
+}) {
+  return (
+    <Select
+      name={name}
+      value={value || undefined}
+      defaultValue={defaultValue || undefined}
+      onValueChange={onValueChange}
+      required={required}
+    >
+      <SelectTrigger size={size} className={className}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent className="bg-[#1e293b] border border-[#475569] text-[#f1f5f9] rounded-lg">
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 function getClientAppUrl() {
   const configuredUrl = process.env.NEXT_PUBLIC_APP_URL;
   const fallbackUrl = typeof window !== 'undefined' ? window.location.origin : '';
   return (configuredUrl || fallbackUrl).replace(/\/$/, '');
+}
+
+function formatSubmissionAnswerValue(value: unknown) {
+  if (Array.isArray(value)) return value.join(', ');
+  if (value === null || value === undefined || value === '') return 'No answer submitted';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function normalizeSubmissionAnswers(submission: SubmissionDetail): NormalizedSubmissionAnswer[] {
+  const answers = submission.answers;
+
+  if (Array.isArray(answers)) {
+    return answers.map((answer, index) => ({
+      label: answer.label || `Question ${index + 1}`,
+      value: answer.value,
+      pointsEarned: answer.pointsEarned,
+    }));
+  }
+
+  if (answers && typeof answers === 'object') {
+    return Object.entries(answers).map(([label, value]) => ({ label, value }));
+  }
+
+  return [];
 }
 
 async function safeApiGet<T>(path: string, fallback: T): Promise<T> {
@@ -83,12 +171,11 @@ export default function WorkinspiresDashboard() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(true);
   const [folders, setFolders] = useState<CollectionFolder[]>([]);
+  const [selectedCompanySlug, setSelectedCompanySlug] = useState('');
 
   useEffect(() => {
     if (currentPage === 'reports') {
-      const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
-      const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
-      const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
+      const submissionPath = selectedCompanySlug ? `/api/submissions?companySlug=${encodeURIComponent(selectedCompanySlug)}` : '/api/submissions';
 
       setLoading(true);
       fetch(submissionPath)
@@ -102,7 +189,7 @@ export default function WorkinspiresDashboard() {
           setLoading(false);
         });
     }
-  }, [currentPage, pathname]);
+  }, [currentPage, selectedCompanySlug]);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,14 +198,10 @@ export default function WorkinspiresDashboard() {
 
     async function loadRecords() {
       try {
-        const assignmentPath = companySlug ? `/api/assignments?companySlug=${encodeURIComponent(companySlug)}` : '/api/assignments';
-        const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
-        const [companyRows, participantRows, formRows, assignmentRows, submissionRows, settings] = await Promise.all([
+        const [companyRows, participantRows, formRows, settings] = await Promise.all([
           safeApiGet<Company[]>('/api/companies', []),
           safeApiGet<Participant[]>('/api/participants', []),
           safeApiGet<FormBlueprint[]>('/api/forms', []),
-          safeApiGet<Assignment[]>(assignmentPath, []),
-          safeApiGet<Submission[]>(submissionPath, []),
           safeApiGet<PlatformSettings>('/api/settings', {
             platformName: 'Workinspires',
             notificationsEnabled: true,
@@ -129,11 +212,28 @@ export default function WorkinspiresDashboard() {
 
         if (cancelled) return;
 
+        const activeCompanies = companyRows.filter(c => c.status === 'Enabled' || c.status === 'active');
+        const initialCompanySlug =
+          companySlug ||
+          selectedCompanySlug ||
+          activeCompanies[0]?.slug ||
+          companyRows[0]?.slug ||
+          '';
+        const assignmentPath = initialCompanySlug ? `/api/assignments?companySlug=${encodeURIComponent(initialCompanySlug)}` : '/api/assignments';
+        const submissionPath = initialCompanySlug ? `/api/submissions?companySlug=${encodeURIComponent(initialCompanySlug)}` : '/api/submissions';
+        const [assignmentRows, submissionRows] = await Promise.all([
+          safeApiGet<Assignment[]>(assignmentPath, []),
+          safeApiGet<Submission[]>(submissionPath, []),
+        ]);
+
+        if (cancelled) return;
+
         setCompaniesData(companyRows);
         setParticipants(participantRows);
         setForms(formRows);
         setAssignments(assignmentRows);
         setSubmissions(submissionRows);
+        setSelectedCompanySlug(initialCompanySlug);
         setPlatformName(settings.platformName);
         setNotificationsEnabled(settings.notificationsEnabled);
         setAutoReports(settings.autoReports);
@@ -162,7 +262,7 @@ export default function WorkinspiresDashboard() {
   const [viewingForm, setViewingForm] = useState<FormBlueprint | null>(null);
   const [viewingParticipant, setViewingParticipant] = useState<Participant | null>(null);
   const [viewingCompany, setViewingCompany] = useState<Company | null>(null);
-  const [viewingSubmission, setViewingSubmission] = useState<Submission | null>(null);
+  const [viewingSubmission, setViewingSubmission] = useState<SubmissionDetail | null>(null);
   const [activeFolderView, setActiveFolderView] = useState<CollectionFolder | null>(null);
 
   // Edit states
@@ -173,6 +273,9 @@ export default function WorkinspiresDashboard() {
   const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
   const [editingFolder, setEditingFolder] = useState<CollectionFolder | null>(null);
   const [isSubmissionOpen, setIsSubmissionOpen] = useState(false);
+  const [companyPendingDelete, setCompanyPendingDelete] = useState<Company | null>(null);
+  const [companyDeleteConfirmText, setCompanyDeleteConfirmText] = useState('');
+  const [isDeletingCompany, setIsDeletingCompany] = useState(false);
 
   // Settings state
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -186,13 +289,21 @@ export default function WorkinspiresDashboard() {
   // ==========================================
   const activeCompaniesOptions = useMemo(() => companiesData.filter(c => c.status === 'Enabled' || c.status === 'active'), [companiesData]);
   const activeFormsOptions = useMemo(() => forms.filter(f => f.status === 'Enabled'), [forms]);
+  const selectedCompany = useMemo(
+    () => companiesData.find(c => c.slug === selectedCompanySlug) ?? activeCompaniesOptions[0] ?? companiesData[0] ?? null,
+    [activeCompaniesOptions, companiesData, selectedCompanySlug]
+  );
+  const tenantParticipants = useMemo(
+    () => selectedCompany ? participants.filter(p => p.company === selectedCompany.name) : [],
+    [participants, selectedCompany]
+  );
 
   const folderCollectedAssignmentIds = useMemo(() => {
     return folders.reduce((acc, folder) => [...acc, ...folder.assignmentIds], [] as string[]);
   }, [folders]);
 
   const metrics = useMemo(() => {
-    const totalParts = participants.length;
+    const totalParts = tenantParticipants.length;
     const completedCount = submissions.filter(s => s.status === 'Completed' || s.status === 'Submitted').length;
     const completionRate = submissions.length > 0 ? Math.round((completedCount / submissions.length) * 100) : 0;
     const scores = submissions
@@ -201,7 +312,7 @@ export default function WorkinspiresDashboard() {
     const avgScore = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : "0.0";
     const pendingTasks = submissions.filter(s => s.status !== 'Completed' && s.status !== 'Submitted').length;
     return { totalParts, completionRate, avgScore, pendingTasks };
-  }, [participants, submissions]);
+  }, [tenantParticipants, submissions]);
 
   const companyStats = useMemo(() => {
     return companiesData.map(company => {
@@ -253,6 +364,24 @@ export default function WorkinspiresDashboard() {
 
   const matchQuery = (text: string) => text.toLowerCase().includes(globalSearchQuery.toLowerCase());
 
+  const handleCompanyScopeChange = async (companySlug: string) => {
+    setSelectedCompanySlug(companySlug);
+    setCompanyFilter('all');
+    setLoading(true);
+
+    try {
+      const [assignmentRows, submissionRows] = await Promise.all([
+        safeApiGet<Assignment[]>(`/api/assignments?companySlug=${encodeURIComponent(companySlug)}`, []),
+        safeApiGet<Submission[]>(`/api/submissions?companySlug=${encodeURIComponent(companySlug)}`, []),
+      ]);
+
+      setAssignments(assignmentRows);
+      setSubmissions(submissionRows);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const navigate = (page: PageType) => {
     if (currentPage === 'participants' && page !== 'participants') setCompanyFilter('all');
     setCurrentPage(page);
@@ -303,82 +432,53 @@ export default function WorkinspiresDashboard() {
     }
   };
 
-const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish = false) => {
+  const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish = false) => {
   e.preventDefault();
+  const selectedTenant = selectedCompany;
   const appUrl = getClientAppUrl();
   const data = new FormData(e.currentTarget);
   const name = (data.get('name') as string || '').trim();
   const formName = data.get('formName') as string;
-  const target = data.get('target') as string;
+  const target = selectedTenant?.name ?? (data.get('target') as string);
   const date = data.get('date') as string;
   const status = (data.get('status') as 'Enabled' | 'Disabled') || 'Enabled';
-  if (!name || !formName || !target || !date) { alert("Please fill in all required fields."); return; }
+  if (!selectedTenant) { alert("Please create or select a company first."); return; }
+  if (!name || !formName || !target || !date) { alert("Please fill in all required fields."); return; 
+  };
 
   const targetParticipants = participants.filter(p => p.company === target && p.status === 'Enabled');
   const selectedForm = forms.find(f => f.name === formName);
-  const selectedCompany = companiesData.find(c => c.name === target);
   const refreshSubmissions = async () => {
     const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
-    const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
+    const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : selectedTenant.slug;
     const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
     setSubmissions(await safeApiGet<Submission[]>(submissionPath, submissions));
-  };
-
-  const loadAssignmentSubmissions = async (assignmentId: string) => {
-    const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
-    const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
-    const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
-    const rows = await safeApiGet<Submission[]>(submissionPath, []);
-    return rows.filter((submission) => submission.assignmentId === assignmentId);
-  };
-
-  const sendUniqueSubmissionLinks = async (assignment: Assignment, assignmentName: string, dueDate: string) => {
-    const assignmentSubmissions = await loadAssignmentSubmissions(assignment.id);
-    const emailJobs = assignmentSubmissions
-      .filter((submission) => submission.participantEmail)
-      .map((submission) =>
-        fetch('/api/send-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: submission.participantEmail,
-            subject: `New Assignment: ${assignmentName}`,
-            html: renderEvaluationEmail({
-              assignmentName,
-              participantName: submission.participantName,
-              dueDate: formatDate(dueDate),
-              evaluationUrl: `${appUrl}/submissions/${submission.id}`,
-            }),
-          }),
-        })
-      );
-
-    await Promise.allSettled(emailJobs);
-    return emailJobs.length;
   };
 
   if (editingAssignment) {
     const wasPublished = editingAssignment.published;
     const nowPublishing = publish && !wasPublished;
     
-    const savedAssignment = await apiPut<Assignment>(`/api/assignments/${editingAssignment.id}`, {
+    const savedAssignment = await apiPut<AssignmentSaveResult>(`/api/assignments/${editingAssignment.id}`, {
       ...editingAssignment, name, formName, formBlueprintId: editingAssignment.formBlueprintId ?? selectedForm?.id, assignedTo: target,
+      companySlug: selectedTenant.slug,
       dueDate: date.includes('-') ? formatDate(date) : date, rawDate: date, status,
       published: publish || wasPublished,
+      appUrl,
     });
     
     setAssignments(assignments.map(a => a.id === editingAssignment.id ? savedAssignment : a));
     await refreshSubmissions();
     
     if (nowPublishing) {
-      const sentCount = await sendUniqueSubmissionLinks(savedAssignment, name, date);
-      alert(`Assignment published! Unique evaluation links sent to ${sentCount} participant(s) at ${target}.`);
+      const failures = savedAssignment.emailFailures?.length ? ` ${savedAssignment.emailFailures.length} email(s) failed.` : '';
+      alert(`Assignment published! Unique evaluation links sent to ${savedAssignment.emailsSent ?? 0} participant(s) at ${target}.${failures}`);
     }
     setEditingAssignment(null);
   } else {
-    const newAsg = await apiPost<Assignment>('/api/assignments', {
+    const newAsg = await apiPost<AssignmentSaveResult>('/api/assignments', {
       id: `asg_${Date.now()}`, name, formName, assignedTo: target,
-      companySlug: selectedCompany?.slug,
+      companySlug: selectedTenant.slug,
       formBlueprintId: selectedForm?.id,
       rawDate: date,
       totalCount: targetParticipants.length,
@@ -389,7 +489,10 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
     setAssignments([newAsg, ...assignments]);
     await refreshSubmissions();
     
-    if (publish) alert(`Assignment published! Unique evaluation links sent to ${targetParticipants.length} participant(s) at ${target}.`);
+    if (publish) {
+      const failures = newAsg.emailFailures?.length ? ` ${newAsg.emailFailures.length} email(s) failed.` : '';
+      alert(`Assignment published! ${newAsg.submissionsCreated ?? targetParticipants.length} unique submission record(s) created and ${newAsg.emailsSent ?? 0} email(s) sent to ${target}.${failures}`);
+    }
   }
   setIsAssignmentOpen(false);
 };
@@ -399,46 +502,28 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
     if (!asg) return;
     const targetParticipants = participants.filter(p => p.company === asg.assignedTo && p.status === 'Enabled');
     if (confirm(`Publish "${asg.name}" to ${targetParticipants.length} participant(s) at ${asg.assignedTo}?\n\nThis will send email notifications to:\n${targetParticipants.map(p => `• ${p.name} (${p.email})`).join('\n')}`)) {
-      const savedAssignment = await apiPut<Assignment>(`/api/assignments/${id}`, { ...asg, published: true });
+      const savedAssignment = await apiPut<AssignmentSaveResult>(`/api/assignments/${id}`, { ...asg, published: true, appUrl: getClientAppUrl() });
       setAssignments(assignments.map(a => a.id === id ? savedAssignment : a));
       const tenantMatch = pathname.match(/^\/app\/([^/]+)/);
-      const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : null;
+      const companySlug = tenantMatch?.[1] ? decodeURIComponent(tenantMatch[1]) : selectedCompanySlug;
       const submissionPath = companySlug ? `/api/submissions?companySlug=${encodeURIComponent(companySlug)}` : '/api/submissions';
-      const assignmentSubmissions = (await safeApiGet<Submission[]>(submissionPath, submissions))
-        .filter((submission) => submission.assignmentId === id && submission.participantEmail);
-      const appUrl = getClientAppUrl();
-
-      await Promise.allSettled(
-        assignmentSubmissions.map((submission) =>
-          fetch('/api/send-email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: submission.participantEmail,
-              subject: `New Assignment: ${asg.name}`,
-              html: renderEvaluationEmail({
-                assignmentName: asg.name,
-                participantName: submission.participantName,
-                dueDate: asg.dueDate,
-                evaluationUrl: `${appUrl}/submissions/${submission.id}`,
-              }),
-            }),
-          })
-        )
-      );
+      const failures = savedAssignment.emailFailures?.length ? ` ${savedAssignment.emailFailures.length} email(s) failed.` : '';
       setSubmissions(await safeApiGet<Submission[]>(submissionPath, submissions));
+      alert(`Assignment published! Unique evaluation links sent to ${savedAssignment.emailsSent ?? 0} participant(s) at ${asg.assignedTo}.${failures}`);
     }
   };
 
   const navBtn = (page: PageType, icon: React.ReactNode, label: string) => (
-    <button
+    <Button
+      type="button"
+      variant="ghost"
       onClick={() => navigate(page)}
-      className={`w-full text-left flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[14px] font-medium transition-all ${currentPage === page
+      className={`w-full justify-start text-left flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[14px] font-medium transition-all h-auto ${currentPage === page
         ? 'bg-gradient-to-r from-[#3b82f6] to-transparent bg-[#3b82f6]/20 text-[#3b82f6] border-l-[3px] border-[#3b82f6] shadow-[inset_0_0_15px_rgba(59,130,246,0.1)]'
         : 'text-[#cbd5e1] border-l-[3px] border-transparent hover:bg-[#475569] hover:text-white'}`}
     >
       {icon} {label}
-    </button>
+    </Button>
   );
 
   const deleteAssignment = async (id: string) => {
@@ -492,13 +577,15 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
 
   const handleSaveParticipant = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    const selectedTenant = selectedCompany;
     const data = new FormData(e.currentTarget);
     const firstName = (data.get('firstName') as string || '').trim();
     const lastName = (data.get('lastName') as string || '').trim();
     const email = (data.get('email') as string || '').trim();
     const department = (data.get('department') as string || '').trim() || 'General Operations';
-    const company = data.get('companySelect') as string;
+    const company = selectedTenant?.name ?? (data.get('companySelect') as string);
     const status = (data.get('status') as 'Enabled' | 'Disabled') || 'Enabled';
+    if (!selectedTenant) { alert("Please create or select a company first."); return; }
     if (!firstName || !lastName || !email || !company) { alert("Please fill in all required fields."); return; }
     if (editingParticipant) {
       const savedParticipant = await apiPut<Participant>(`/api/participants/${editingParticipant.id}`, {
@@ -529,22 +616,66 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
     if (!name) { alert("Company name is required."); return; }
     if (editingCompany) {
       const savedCompany = await apiPut<Company>(`/api/companies/${editingCompany.id}`, { ...editingCompany, name, industry, status });
-      setParticipants(participants.map(p => p.company === editingCompany.name ? { ...p, company: savedCompany.name } : p));
-      setCompaniesData(companiesData.map(c => c.id === editingCompany.id ? savedCompany : c));
+      const updatedCompany = { ...editingCompany, ...savedCompany, slug: savedCompany.slug ?? editingCompany.slug };
+      setParticipants(participants.map(p => p.company === editingCompany.name ? { ...p, company: updatedCompany.name } : p));
+      setCompaniesData(companiesData.map(c => c.id === editingCompany.id ? updatedCompany : c));
+      if (editingCompany.slug === selectedCompanySlug && updatedCompany.slug) {
+        setSelectedCompanySlug(updatedCompany.slug);
+      }
       setEditingCompany(null);
     } else {
       const savedCompany = await apiPost<Company>('/api/companies', { id: `c_${Date.now()}`, name, industry, createdDate: formatDate(new Date().toISOString().split('T')[0]), status: "Enabled" });
       setCompaniesData([savedCompany, ...companiesData]);
+      if (savedCompany.slug) {
+        setSelectedCompanySlug(savedCompany.slug);
+        setAssignments([]);
+        setSubmissions([]);
+      }
     }
     setIsCompanyOpen(false);
   };
 
-  const deleteCompanyEntity = async (id: string, name: string) => {
-    const clusterCount = participants.filter(p => p.company === name).length;
-    if (clusterCount > 0) { alert(`Cannot delete "${name}" — ${clusterCount} participants are still linked.`); return; }
-    if (confirm(`Delete company "${name}"?`)) {
-      await apiDelete(`/api/companies/${id}`);
-      setCompaniesData(companiesData.filter(c => c.id !== id));
+  const beginDeleteCompany = (company: Company) => {
+    setCompanyPendingDelete(company);
+    setCompanyDeleteConfirmText('');
+  };
+
+  const deleteCompanyEntity = async () => {
+    if (!companyPendingDelete || companyDeleteConfirmText !== companyPendingDelete.name) return;
+
+    const clusterCount = participants.filter(p => p.company === companyPendingDelete.name).length;
+    const assignmentCount = assignments.filter(a => a.assignedTo === companyPendingDelete.name).length;
+
+    if (clusterCount > 0 || assignmentCount > 0) {
+      alert(`Cannot delete "${companyPendingDelete.name}" while ${clusterCount} participant(s) or ${assignmentCount} assignment(s) are linked.`);
+      return;
+    }
+
+    setIsDeletingCompany(true);
+    try {
+      const response = await fetch(`/api/companies/${companyPendingDelete.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmationName: companyDeleteConfirmText }),
+      });
+
+      if (!response.ok) throw new Error(await response.text());
+
+      const nextCompanies = companiesData.filter(c => c.id !== companyPendingDelete.id);
+      setCompaniesData(nextCompanies);
+      if (companyPendingDelete.slug === selectedCompanySlug) {
+        const nextCompany = nextCompanies.find(c => c.status === 'Enabled' || c.status === 'active') ?? nextCompanies[0];
+        setSelectedCompanySlug(nextCompany?.slug ?? '');
+        setAssignments([]);
+        setSubmissions([]);
+      }
+      setCompanyPendingDelete(null);
+      setCompanyDeleteConfirmText('');
+    } catch (error) {
+      console.error('Failed to delete company:', error);
+      alert(error instanceof Error ? error.message : 'Failed to delete company. Please try again.');
+    } finally {
+      setIsDeletingCompany(false);
     }
   };
 
@@ -576,6 +707,28 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
     } catch (error) {
       console.error('Failed to save admin review:', error);
       alert('Failed to save admin review. Please try again.');
+    }
+  };
+
+  const deleteSubmission = async (id: string) => {
+    if (confirm("Remove this result entry?")) {
+      try {
+        await apiDelete(`/api/submissions/${id}`);
+        setSubmissions(submissions.filter(s => s.id !== id));
+      } catch (error) {
+        console.error('Failed to delete submission:', error);
+        alert('Failed to delete submission. Please try again.');
+      }
+    }
+  };
+
+  const handleViewSubmission = async (submission: Submission) => {
+    try {
+      const detail = await apiGet<SubmissionDetail>(`/api/submissions/${submission.id}`);
+      setViewingSubmission(detail);
+    } catch (error) {
+      console.error('Failed to load submitted result details:', error);
+      alert('Unable to load submitted answers. Please try again.');
     }
   };
 
@@ -611,24 +764,19 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
   const PageAction = () => {
     const btnClass = "flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#3b82f6] to-[#60a5fa] text-white rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity shadow";
     if (currentPage === 'assignments') return (
-      <button className={btnClass} onClick={() => { setEditingAssignment(null); setIsAssignmentOpen(true); }}>
+      <Button type="button" className={btnClass} onClick={() => { setEditingAssignment(null); setIsAssignmentOpen(true); }}>
         <Plus className="h-4 w-4" /> New Assignment
-      </button>
+      </Button>
     );
     if (currentPage === 'collections') return (
-      <button className={btnClass} onClick={() => { setEditingFolder(null); setIsFolderOpen(true); }}>
+      <Button type="button" className={btnClass} onClick={() => { setEditingFolder(null); setIsFolderOpen(true); }}>
         <FolderPlus className="h-4 w-4" /> New Folder
-      </button>
+      </Button>
     );
     if (currentPage === 'participants') return (
-      <button className={btnClass} onClick={() => { setEditingParticipant(null); setIsParticipantOpen(true); }}>
+      <Button type="button" className={btnClass} onClick={() => { setEditingParticipant(null); setIsParticipantOpen(true); }}>
         <Plus className="h-4 w-4" /> New Participant
-      </button>
-    );
-    if (currentPage === 'companies') return (
-      <button className={btnClass} onClick={() => { setEditingCompany(null); setIsCompanyOpen(true); }}>
-        <Plus className="h-4 w-4" /> New Company
-      </button>
+      </Button>
     );
     // if (currentPage === 'reports') return (
     //   <button className={btnClass} onClick={() => setIsReportOpen(true)}>
@@ -644,9 +792,21 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
       {/* SIDEBAR */}
       <aside className="bg-gradient-to-b from-[#0f172a] to-[#1a1f35] border-r border-[#475569] p-6 flex flex-col justify-between shadow-[inset_0_0_20px_rgba(0,0,0,0.5)]">
         <div className="space-y-10">
-          <div className="flex items-center gap-3 text-xl font-bold tracking-tight pb-6 border-b border-[#475569]">
+          <div className="pb-6 border-b border-[#475569] space-y-3">
+            <div className="flex items-center gap-3 text-xl font-bold tracking-tight">
             <GraduationCap className="h-7 w-7 text-[#3b82f6]" style={{ filter: "drop-shadow(0 0 10px rgba(59, 130, 246, 0.5))" }} />
             <span className="tracking-tight text-white font-bold">Workinspires</span>
+            </div>
+            <DashboardSelect
+              value={selectedCompanySlug}
+              onValueChange={handleCompanyScopeChange}
+              placeholder="Select company"
+              size="sm"
+              className="w-full bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+              options={activeCompaniesOptions
+                .filter((company) => company.slug)
+                .map((company) => ({ value: company.slug as string, label: company.name }))}
+            />
           </div>
 
           <nav className="space-y-6">
@@ -660,16 +820,17 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
               <p className="text-[10px] font-semibold tracking-widest text-[#94a3b8]/50 uppercase px-3 mb-3">MANAGEMENT</p>
               
               {/* 🌐 INTERACTIVE SIDEBAR ROUTING LINK SWITCH */}
-              <button
+              <Button
+                type="button"
+                variant="ghost"
                 onClick={() => router.push('/forms')}
-                className="w-full text-left flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[14px] font-medium transition-all text-[#cbd5e1] border-l-[3px] border-transparent hover:bg-[#475569] hover:text-white"
+                className="w-full justify-start text-left flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[14px] font-medium transition-all text-[#cbd5e1] border-l-[3px] border-transparent hover:bg-[#475569] hover:text-white h-auto"
               >
                 <FileSpreadsheet className="h-[18px] w-[18px]" /> Form Builder
-              </button>
+              </Button>
 
               {navBtn('results', <BarChart3 className="h-[18px] w-[18px]" />, 'Results')}
               {navBtn('participants', <Users className="h-[18px] w-[18px]" />, 'Participants')}
-              {navBtn('companies', <Building2 className="h-[18px] w-[18px]" />, 'Companies')}
             </div>
             <div className="space-y-1">
               <p className="text-[10px] font-semibold tracking-widest text-[#94a3b8]/50 uppercase px-3 mb-3">SYSTEM</p>
@@ -698,7 +859,7 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2.5 px-4 py-2.5 border border-[#475569] rounded-lg bg-[#334155] focus-within:border-[#3b82f6] transition-colors">
               <Search className="h-3.5 w-3.5 text-[#94a3b8]" />
-              <input value={globalSearchQuery} onChange={(e) => setGlobalSearchQuery(e.target.value)} placeholder="Search records..." className="bg-transparent border-none text-xs text-[#f1f5f9] placeholder-[#94a3b8] outline-none w-64" />
+              <Input value={globalSearchQuery} onChange={(e) => setGlobalSearchQuery(e.target.value)} placeholder="Search records..." className="bg-transparent border-none text-xs text-[#f1f5f9] placeholder-[#94a3b8] outline-none w-64 h-6 px-0 py-0 focus-visible:ring-0 focus-visible:border-transparent" />
             </div>
             <PageAction />
           </div>
@@ -855,8 +1016,8 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                             <Folder className="text-[#3b82f6] h-5 w-5 shrink-0" /> {fol.name}
                           </CardTitle>
                           <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 absolute top-4 right-4">
-                            <button onClick={() => { setEditingFolder(fol); setIsFolderOpen(true); }} className="text-[#cbd5e1] hover:text-white p-1"><Edit2 className="h-3.5 w-3.5" /></button>
-                            <button onClick={() => deleteFolder(fol.id)} className="text-rose-400 hover:text-rose-200 p-1"><Trash2 className="h-3.5 w-3.5" /></button>
+                            <Button type="button" variant="ghost" size="icon-xs" onClick={() => { setEditingFolder(fol); setIsFolderOpen(true); }} className="text-[#cbd5e1] hover:text-white"><Edit2 className="h-3.5 w-3.5" /></Button>
+                            <Button type="button" variant="ghost" size="icon-xs" onClick={() => deleteFolder(fol.id)} className="text-rose-400 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></Button>
                           </div>
                         </CardHeader>
                         <CardContent className="space-y-4 pt-2">
@@ -887,16 +1048,24 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
           {currentPage === 'results' && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="flex items-center gap-3 flex-wrap">
-                <select value={programFilter} onChange={e => setProgramFilter(e.target.value)} className="bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] outline-none focus:border-[#3b82f6]">
-                  {uniquePrograms.map(p => <option key={p} value={p}>{p === 'all' ? 'All Programs' : p}</option>)}
-                </select>
-                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] outline-none focus:border-[#3b82f6]">
-                  {uniqueStatuses.map(s => <option key={s} value={s}>{s === 'all' ? 'All Statuses' : s}</option>)}
-                </select>
+                <DashboardSelect
+                  value={programFilter}
+                  onValueChange={setProgramFilter}
+                  className="w-[180px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                  size="sm"
+                  options={uniquePrograms.map(p => ({ value: p, label: p === 'all' ? 'All Programs' : p }))}
+                />
+                <DashboardSelect
+                  value={statusFilter}
+                  onValueChange={setStatusFilter}
+                  className="w-[170px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                  size="sm"
+                  options={uniqueStatuses.map(s => ({ value: s, label: s === 'all' ? 'All Statuses' : s }))}
+                />
                 {(programFilter !== 'all' || statusFilter !== 'all') && (
-                  <button onClick={() => { setProgramFilter('all'); setStatusFilter('all'); }} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border border-[#475569]/50 rounded-lg">
+                  <Button type="button" variant="outline" size="sm" onClick={() => { setProgramFilter('all'); setStatusFilter('all'); }} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border-[#475569]/50 rounded-lg bg-transparent h-8">
                     <X className="h-3 w-3" /> Clear filters
-                  </button>
+                  </Button>
                 )}
                 <span className="text-xs text-[#94a3b8] ml-auto">{filteredSubmissions.length} result{filteredSubmissions.length !== 1 ? 's' : ''}</span>
               </div>
@@ -939,7 +1108,7 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                           <TableCell className="py-4 text-[#cbd5e1]">{sub.adminRemark || 'Not Reviewed'}</TableCell>
                           <TableCell className="py-4 text-right">
                             <div className="flex justify-end gap-2">
-                              <Button size="sm" onClick={() => setViewingSubmission(sub)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
+                              <Button size="sm" onClick={() => handleViewSubmission(sub)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
                               <Button size="sm" onClick={() => { setEditingSubmission(sub); setIsSubmissionOpen(true); }} className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 w-8 p-0"><Edit2 className="h-3.5 w-3.5" /></Button>
                             </div>
                           </TableCell>
@@ -958,14 +1127,8 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
           {/* PARTICIPANTS */}
           {currentPage === 'participants' && (
             <div className="space-y-4 animate-in fade-in duration-200">
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-xs text-[#94a3b8]">Filter by company:</span>
-                {['all', ...companiesData.map(c => c.name)].map(c => (
-                  <button key={c} onClick={() => setCompanyFilter(c)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${companyFilter === c ? 'bg-[#3b82f6]/20 text-[#3b82f6] border-[#3b82f6]/40' : 'text-[#94a3b8] border-[#475569]/40 hover:border-[#475569]'}`}>
-                    {c === 'all' ? 'All' : c}
-                  </button>
-                ))}
+              <div className="text-xs text-[#94a3b8]">
+                Showing isolated tenant roster for <span className="font-bold text-[#3b82f6]">{selectedCompany?.name || 'No company selected'}</span>
               </div>
               <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md">
                 <div className="w-full overflow-x-auto rounded-xl border border-[#475569]/20">
@@ -981,8 +1144,7 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {participants
-                        .filter(p => companyFilter === 'all' || p.company === companyFilter)
+                      {tenantParticipants
                         .filter(p => globalSearchQuery === '' || matchQuery(p.name) || matchQuery(p.email))
                         .map(part => (
                           <TableRow key={part.id} className={`border-b border-[#475569]/30 hover:bg-[#475569]/40 ${part.status === 'Disabled' ? 'opacity-50' : ''}`}>
@@ -1004,7 +1166,7 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                             </TableCell>
                           </TableRow>
                         ))}
-                      {participants.filter(p => companyFilter === 'all' || p.company === companyFilter).length === 0 && (
+                      {tenantParticipants.length === 0 && (
                         <TableRow><TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">No participants found.</TableCell></TableRow>
                       )}
                     </TableBody>
@@ -1025,9 +1187,9 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                         <Building2 className="text-[#3b82f6] h-4 w-4" /> {c.name}
                       </CardTitle>
                       <div className="opacity-40 group-hover:opacity-100 transition-opacity flex gap-1 absolute top-4 right-4">
-                        <button onClick={() => setViewingCompany(c)} className="text-[#3b82f6] hover:text-white p-1"><Eye className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => { setEditingCompany(c); setIsCompanyOpen(true); }} className="text-[#cbd5e1] hover:text-white p-1"><Edit2 className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => deleteCompanyEntity(c.id, c.name)} className="text-rose-400 hover:text-rose-200 p-1"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <Button type="button" variant="ghost" size="icon-xs" onClick={() => setViewingCompany(c)} className="text-[#3b82f6] hover:text-white"><Eye className="h-3.5 w-3.5" /></Button>
+                        <Button type="button" variant="ghost" size="icon-xs" onClick={() => { setEditingCompany(c); setIsCompanyOpen(true); }} className="text-[#cbd5e1] hover:text-white"><Edit2 className="h-3.5 w-3.5" /></Button>
+                        <Button type="button" variant="ghost" size="icon-xs" onClick={() => beginDeleteCompany(c)} className="text-rose-400 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-3 pt-2">
@@ -1138,13 +1300,17 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs text-[#94a3b8]">Default Timezone</Label>
-                  <select value={timezone} onChange={e => setTimezone(e.target.value)} className="w-full bg-[#334155] border border-[#475569] rounded-lg px-3 py-2.5 text-sm text-[#f1f5f9] outline-none focus:border-[#3b82f6]">
-                    <option value="Asia/Kuala_Lumpur">Asia/Kuala_Lumpur (UTC+8)</option>
-                    <option value="UTC">UTC</option>
-                    <option value="America/New_York">America/New_York (UTC-5)</option>
-                    <option value="Europe/London">Europe/London (UTC+0)</option>
-                    <option value="Asia/Singapore">Asia/Singapore (UTC+8)</option>
-                  </select>
+                  <DashboardSelect
+                    value={timezone}
+                    onValueChange={setTimezone}
+                    options={[
+                      { value: 'Asia/Kuala_Lumpur', label: 'Asia/Kuala_Lumpur (UTC+8)' },
+                      { value: 'UTC', label: 'UTC' },
+                      { value: 'America/New_York', label: 'America/New_York (UTC-5)' },
+                      { value: 'Europe/London', label: 'Europe/London (UTC+0)' },
+                      { value: 'Asia/Singapore', label: 'Asia/Singapore (UTC+8)' },
+                    ]}
+                  />
                 </div>
               </div>
 
@@ -1159,18 +1325,78 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                     <p className="text-sm font-medium text-white">Email Notifications</p>
                     <p className="text-xs text-[#94a3b8] mt-0.5">Receive alerts for new submissions and due dates</p>
                   </div>
-                  <button onClick={() => setNotificationsEnabled(!notificationsEnabled)} className={`w-11 h-6 rounded-full transition-colors relative ${notificationsEnabled ? 'bg-[#3b82f6]' : 'bg-[#475569]'}`}>
+                  <Button type="button" aria-pressed={notificationsEnabled} onClick={() => setNotificationsEnabled(!notificationsEnabled)} className={`w-11 h-6 rounded-full transition-colors relative p-0 ${notificationsEnabled ? 'bg-[#3b82f6] hover:bg-[#3b82f6]' : 'bg-[#475569] hover:bg-[#475569]'}`}>
                     <span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-all ${notificationsEnabled ? 'left-6' : 'left-1'}`} />
-                  </button>
+                  </Button>
                 </div>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-white">Automated Reports</p>
                     <p className="text-xs text-[#94a3b8] mt-0.5">Auto-generate weekly summary reports</p>
                   </div>
-                  <button onClick={() => setAutoReports(!autoReports)} className={`w-11 h-6 rounded-full transition-colors relative ${autoReports ? 'bg-[#3b82f6]' : 'bg-[#475569]'}`}>
+                  <Button type="button" aria-pressed={autoReports} onClick={() => setAutoReports(!autoReports)} className={`w-11 h-6 rounded-full transition-colors relative p-0 ${autoReports ? 'bg-[#3b82f6] hover:bg-[#3b82f6]' : 'bg-[#475569] hover:bg-[#475569]'}`}>
                     <span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-all ${autoReports ? 'left-6' : 'left-1'}`} />
-                  </button>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Companies */}
+              <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 space-y-5">
+                <div className="flex items-center justify-between border-b border-[#475569] pb-4">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-[#3b82f6]" />
+                    <h2 className="text-sm font-bold text-white">Company Tenants</h2>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => { setEditingCompany(null); setIsCompanyOpen(true); }}
+                    className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 px-3 text-xs gap-2"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> New Company
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {companiesData.map((company) => (
+                    <div key={company.id} className="bg-[#0f172a]/40 border border-[#475569]/30 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-white truncate">{company.name}</p>
+                        <p className="text-xs text-[#94a3b8] truncate">{company.industry} - {company.status}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {company.slug === selectedCompanySlug && (
+                          <span className="text-[11px] font-bold text-[#10b981] bg-[#10b981]/10 border border-[#10b981]/30 rounded-full px-2 py-1">Current</span>
+                        )}
+                        {company.slug && company.slug !== selectedCompanySlug && (
+                          <Button
+                            type="button"
+                            onClick={() => company.slug && handleCompanyScopeChange(company.slug)}
+                            className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 px-3 text-xs"
+                          >
+                            Switch
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          onClick={() => { setEditingCompany(company); setIsCompanyOpen(true); }}
+                          className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 w-8 p-0"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => beginDeleteCompany(company)}
+                          className="bg-rose-950/20 border border-rose-900/50 text-rose-400 hover:bg-rose-900/20 h-8 w-8 p-0"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {companiesData.length === 0 && (
+                    <div className="text-xs text-[#94a3b8] bg-[#0f172a]/40 border border-dashed border-[#475569]/40 rounded-lg p-4">
+                      Create a company tenant before adding participants or assignments.
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1234,13 +1460,12 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                   .filter(asg => !folderCollectedAssignmentIds.includes(asg.id) || editingFolder?.assignmentIds.includes(asg.id))
                   .map(asg => (
                     <div key={asg.id} className="flex items-start gap-3 text-xs select-none">
-                      <input 
-                        type="checkbox" 
+                      <Checkbox
                         id={`asg_chk_${asg.id}`}
                         name="assignments" 
                         value={asg.id} 
                         defaultChecked={editingFolder?.assignmentIds.includes(asg.id)}
-                        className="mt-0.5 rounded border-[#475569] bg-[#334155] text-[#3b82f6] focus:ring-0 h-4 w-4 shrink-0" 
+                        className="mt-0.5 border-[#475569] bg-[#334155] text-[#3b82f6] shrink-0" 
                       />
                       <label htmlFor={`asg_chk_${asg.id}`} className="text-white cursor-pointer leading-tight">
                         <span className="font-bold block text-[#cbd5e1]">{asg.name}</span>
@@ -1359,20 +1584,20 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
 
       {/* VIEW: Submission */}
       <Dialog open={!!viewingSubmission} onOpenChange={(open) => !open && setViewingSubmission(null)}>
-        <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-[#475569] text-[#f1f5f9] rounded-xl max-w-[500px] p-8 shadow-2xl">
-          <DialogHeader className="border-b border-[#475569] pb-4 mb-5"><DialogTitle className="text-xl font-bold flex items-center gap-2.5 text-white"><Eye className="text-[#3b82f6] h-5 w-5" /> Result Details</DialogTitle></DialogHeader>
+        <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-[#475569] text-[#f1f5f9] rounded-xl w-[calc(100%-1rem)] max-w-[680px] max-h-[calc(100dvh-2rem)] p-0 gap-0 overflow-hidden shadow-2xl">
+          <DialogHeader className="border-b border-[#475569] px-5 sm:px-8 py-5 pr-14 shrink-0"><DialogTitle className="text-xl font-bold flex items-center gap-2.5 text-white"><Eye className="text-[#3b82f6] h-5 w-5" /> Result Details</DialogTitle></DialogHeader>
           {viewingSubmission && (
-            <div className="space-y-4 text-sm">
+            <div className="space-y-4 text-sm min-h-0 overflow-y-auto px-5 sm:px-8 py-5 sm:py-6">
               <div className="bg-[#0f172a]/40 border border-[#475569]/30 p-4 rounded-xl"><p className="text-base font-bold text-white">{viewingSubmission.participantName}</p><p className="text-xs text-[#94a3b8] mt-1">{viewingSubmission.program}</p></div>
               <div className="bg-[#0f172a]/20 border border-[#475569]/20 p-4 rounded-xl space-y-3">
-                <div className="flex justify-between"><span className="text-[#94a3b8]">Assignment</span><span className="font-bold text-white">{viewingSubmission.assignmentName}</span></div>
+                <div className="flex flex-col gap-1 sm:flex-row sm:justify-between"><span className="text-[#94a3b8]">Assignment</span><span className="font-bold text-white sm:text-right">{viewingSubmission.assignmentName}</span></div>
                 <div className="flex justify-between pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Score</span><span className="font-bold text-[#3b82f6]">{viewingSubmission.score !== null ? `${viewingSubmission.score}/100` : '—'}</span></div>
                 <div className="pt-2 border-t border-[#475569]/10 space-y-2">
                   <div className="flex justify-between"><span className="text-[#94a3b8]">Progress</span><span className="font-bold text-white">{viewingSubmission.progress ?? (viewingSubmission.status === 'Submitted' || viewingSubmission.status === 'Completed' ? 100 : 0)}%</span></div>
                   <div className="bg-[#0f172a] rounded-full h-2 overflow-hidden"><div className="h-full rounded-full bg-[#3b82f6]" style={{ width: `${viewingSubmission.progress ?? (viewingSubmission.status === 'Submitted' || viewingSubmission.status === 'Completed' ? 100 : 0)}%` }} /></div>
                 </div>
-                <div className="flex justify-between pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Status</span><SubmissionStatusBadge status={viewingSubmission.status} /></div>
-                <div className="flex justify-between pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Admin Remark</span><span className="font-bold text-white">{viewingSubmission.adminRemark || 'Not Reviewed'}</span></div>
+                <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Status</span><SubmissionStatusBadge status={viewingSubmission.status} /></div>
+                <div className="flex flex-col gap-1 sm:flex-row sm:justify-between pt-2 border-t border-[#475569]/10"><span className="text-[#94a3b8]">Admin Remark</span><span className="font-bold text-white sm:text-right">{viewingSubmission.adminRemark || 'Not Reviewed'}</span></div>
                 {(viewingSubmission.adminComment || viewingSubmission.adminRemark) && (
                   <div className="pt-3 border-t border-[#475569]/10 space-y-1">
                     <span className="text-[10px] text-[#94a3b8] block uppercase">Admin Review Notes</span>
@@ -1383,6 +1608,35 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
                   </div>
                 )}
               </div>
+              <div className="bg-[#0f172a]/20 border border-[#475569]/20 p-4 rounded-xl space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-[#475569]/20 pb-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-[#94a3b8]">Submitted Answers</p>
+                    <p className="text-sm font-semibold text-white">{viewingSubmission.formName || viewingSubmission.assignmentName}</p>
+                  </div>
+                  <span className="text-xs text-[#94a3b8]">{normalizeSubmissionAnswers(viewingSubmission).length} answer{normalizeSubmissionAnswers(viewingSubmission).length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="max-h-[min(320px,45dvh)] overflow-y-auto space-y-3 pr-1">
+                  {normalizeSubmissionAnswers(viewingSubmission).map((answer, index) => (
+                    <div key={`${answer.label}-${index}`} className="bg-[#0f172a]/40 border border-[#475569]/30 rounded-lg p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-xs font-bold text-[#cbd5e1] leading-relaxed">{answer.label}</p>
+                        {typeof answer.pointsEarned === 'number' && (
+                          <span className="shrink-0 text-[10px] font-bold text-[#3b82f6] bg-[#3b82f6]/10 border border-[#3b82f6]/30 rounded-full px-2 py-0.5">
+                            {answer.pointsEarned} pts
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-2 text-sm text-white leading-relaxed whitespace-pre-wrap">{formatSubmissionAnswerValue(answer.value)}</p>
+                    </div>
+                  ))}
+                  {normalizeSubmissionAnswers(viewingSubmission).length === 0 && (
+                    <div className="text-xs text-[#94a3b8] bg-[#0f172a]/30 border border-dashed border-[#475569]/40 rounded-lg p-4 text-center">
+                      No submitted answers found for this result.
+                    </div>
+                  )}
+                </div>
+              </div>
               <Button onClick={() => setViewingSubmission(null)} className="w-full bg-[#334155] hover:bg-[#475569]">Close</Button>
             </div>
           )}
@@ -1391,13 +1645,13 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
 
       {/* REVIEW: Submission */}
       <Dialog open={isSubmissionOpen} onOpenChange={(open) => { setIsSubmissionOpen(open); if (!open) setEditingSubmission(null); }}>
-        <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-[#475569] text-[#f1f5f9] rounded-xl max-w-[550px] p-8 shadow-2xl">
-          <DialogHeader className="border-b border-[#475569] pb-4 mb-4">
+        <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-[#475569] text-[#f1f5f9] rounded-xl w-[calc(100%-1rem)] max-w-[550px] max-h-[calc(100dvh-2rem)] p-0 gap-0 overflow-hidden shadow-2xl">
+          <DialogHeader className="border-b border-[#475569] px-5 sm:px-8 py-5 pr-14 shrink-0">
             <DialogTitle className="text-xl font-bold">
               Admin Review
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSaveSubmission} className="space-y-5">
+          <form onSubmit={handleSaveSubmission} className="space-y-5 min-h-0 overflow-y-auto px-5 sm:px-8 py-5 sm:py-6">
             {editingSubmission && (
               <div className="bg-[#0f172a]/30 border border-[#475569]/30 rounded-xl p-4 space-y-3 text-sm">
                 {[
@@ -1417,13 +1671,16 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
             )}
             <div className="space-y-2">
               <Label>Remark *</Label>
-              <select name="adminRemark" required defaultValue={editingSubmission?.adminRemark || 'Not Reviewed'} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none h-11">
-                {adminRemarkOptions.map((remark) => <option key={remark} value={remark}>{remark}</option>)}
-              </select>
+              <DashboardSelect
+                name="adminRemark"
+                required
+                defaultValue={editingSubmission?.adminRemark || 'Not Reviewed'}
+                options={adminRemarkOptions.map((remark) => ({ value: remark, label: remark }))}
+              />
             </div>
             <div className="space-y-2">
               <Label>Admin Review Notes</Label>
-              <textarea name="adminComment" placeholder="Add internal review notes. This does not change participant submission data." defaultValue={editingSubmission?.adminComment || ''} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-white min-h-[110px] outline-none" />
+              <Textarea name="adminComment" placeholder="Add internal review notes. This does not change participant submission data." defaultValue={editingSubmission?.adminComment || ''} className="w-full bg-[#334155] border-[#475569] rounded-lg p-3 text-sm text-white min-h-[110px]" />
             </div>
             <DialogFooter>
               <Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full h-11 font-bold">
@@ -1442,33 +1699,48 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
             <div className="space-y-2"><Label>Assignment Name *</Label><Input name="name" required defaultValue={editingAssignment?.name || ''} className="bg-[#334155] border-[#475569] h-11 text-white" /></div>
             <div className="space-y-2">
               <Label>Form Template *</Label>
-              <select name="formName" required defaultValue={editingAssignment?.formName || ""} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                <option value="" disabled>-- Select Template --</option>
-                {activeFormsOptions.map(f => <option key={f.id} value={f.name}>{f.name}</option>)}
-                {editingAssignment && forms.find(f => f.name === editingAssignment.formName)?.status === 'Disabled' && (
-                  <option value={editingAssignment.formName}>{editingAssignment.formName} (Disabled)</option>
-                )}
-              </select>
+              <DashboardSelect
+                name="formName"
+                required
+                defaultValue={editingAssignment?.formName || ""}
+                placeholder="Select template"
+                options={[
+                  ...activeFormsOptions.map(f => ({ value: f.name, label: f.name })),
+                  ...(editingAssignment && forms.find(f => f.name === editingAssignment.formName)?.status === 'Disabled'
+                    ? [{ value: editingAssignment.formName, label: `${editingAssignment.formName} (Disabled)` }]
+                    : []),
+                ]}
+              />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Assign To Company *</Label>
-                <select name="target" required defaultValue={editingAssignment?.assignedTo || ""} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                  <option value="" disabled>-- Select Company --</option>
-                  {activeCompaniesOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  {editingAssignment && companiesData.find(c => c.name === editingAssignment.assignedTo)?.status === 'Disabled' && (
-                    <option value={editingAssignment.assignedTo}>{editingAssignment.assignedTo} (Disabled)</option>
-                  )}
-                </select>
+                <DashboardSelect
+                  name="target"
+                  required
+                  defaultValue={editingAssignment?.assignedTo || selectedCompany?.name || ""}
+                  placeholder={selectedCompany ? "Select company" : "Create a company first"}
+                  options={[
+                    ...(selectedCompany ? [{ value: selectedCompany.name, label: selectedCompany.name }] : []),
+                    ...(editingAssignment && editingAssignment.assignedTo !== selectedCompany?.name
+                      ? [{ value: editingAssignment.assignedTo, label: `${editingAssignment.assignedTo} (Disabled)` }]
+                      : []),
+                  ]}
+                />
               </div>
               <div className="space-y-2"><Label>Due Date *</Label><Input type="date" name="date" required defaultValue={editingAssignment?.rawDate || ''} className="bg-[#334155] border-[#475569] h-11 px-3 text-white" /></div>
             </div>
             <div className="space-y-2">
               <Label>Status *</Label>
-              <select name="status" required defaultValue={editingAssignment?.status || "Enabled"} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                <option value="Enabled">Enabled</option>
-                <option value="Disabled">Disabled</option>
-              </select>
+              <DashboardSelect
+                name="status"
+                required
+                defaultValue={editingAssignment?.status || "Enabled"}
+                options={[
+                  { value: "Enabled", label: "Enabled" },
+                  { value: "Disabled", label: "Disabled" },
+                ]}
+              />
             </div>
             <DialogFooter><Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full">Save Assignment</Button></DialogFooter>
           </form>
@@ -1488,13 +1760,18 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
               </div>
               <Input name="googleFormUrl" placeholder="https://docs.google.com/forms/d/e/.../viewform" defaultValue={editingForm?.googleFormUrl || ''} className="bg-[#334155] border-[#475569] text-xs h-10 text-[#60a5fa]" />
             </div>
-            <div className="space-y-2"><Label>Description</Label><textarea name="description" defaultValue={editingForm?.description || ''} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-white min-h-[80px] outline-none" /></div>
+            <div className="space-y-2"><Label>Description</Label><Textarea name="description" defaultValue={editingForm?.description || ''} className="w-full bg-[#334155] border-[#475569] rounded-lg p-3 text-sm text-white min-h-[80px]" /></div>
             <div className="space-y-2">
               <Label>Status *</Label>
-              <select name="status" required defaultValue={editingForm?.status || "Enabled"} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                <option value="Enabled">Enabled</option>
-                <option value="Disabled">Disabled</option>
-              </select>
+              <DashboardSelect
+                name="status"
+                required
+                defaultValue={editingForm?.status || "Enabled"}
+                options={[
+                  { value: "Enabled", label: "Enabled" },
+                  { value: "Disabled", label: "Disabled" },
+                ]}
+              />
             </div>
             <DialogFooter><Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full">Save Form</Button></DialogFooter>
           </form>
@@ -1520,20 +1797,34 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label>Company *</Label>
-                  <select name="companySelect" required defaultValue={editingParticipant?.company || ""} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-2.5 text-xs text-[#f1f5f9] outline-none">
-                    <option value="" disabled>-- Select Company --</option>
-                    {activeCompaniesOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                    {editingParticipant && companiesData.find(c => c.name === editingParticipant.company)?.status === 'Disabled' && (
-                      <option value={editingParticipant.company}>{editingParticipant.company} (Disabled)</option>
-                    )}
-                  </select>
+                  <DashboardSelect
+                    name="companySelect"
+                    required
+                    defaultValue={editingParticipant?.company || selectedCompany?.name || ""}
+                    placeholder={selectedCompany ? "Select company" : "Create a company first"}
+                    className="w-full bg-[#334155] border-[#475569] text-[#f1f5f9] h-10 rounded-lg text-xs"
+                    size="sm"
+                    options={[
+                      ...(selectedCompany ? [{ value: selectedCompany.name, label: selectedCompany.name }] : []),
+                      ...(editingParticipant && editingParticipant.company !== selectedCompany?.name
+                        ? [{ value: editingParticipant.company, label: `${editingParticipant.company} (Disabled)` }]
+                        : []),
+                    ]}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Status *</Label>
-                  <select name="status" required defaultValue={editingParticipant?.status || "Enabled"} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-2.5 text-xs text-[#f1f5f9] outline-none">
-                    <option value="Enabled">Enabled</option>
-                    <option value="Disabled">Disabled</option>
-                  </select>
+                  <DashboardSelect
+                    name="status"
+                    required
+                    defaultValue={editingParticipant?.status || "Enabled"}
+                    className="w-full bg-[#334155] border-[#475569] text-[#f1f5f9] h-10 rounded-lg text-xs"
+                    size="sm"
+                    options={[
+                      { value: "Enabled", label: "Enabled" },
+                      { value: "Disabled", label: "Disabled" },
+                    ]}
+                  />
                 </div>
               </div>
             </div>
@@ -1551,13 +1842,76 @@ const handleSaveAssignment = async (e: React.FormEvent<HTMLFormElement>, publish
             <div className="space-y-2"><Label>Industry</Label><Input name="industry" placeholder="e.g. Heavy Supply Logistics" defaultValue={editingCompany?.industry || ''} className="bg-[#334155] border-[#475569] h-11 text-white" /></div>
             <div className="space-y-2">
               <Label>Status *</Label>
-              <select name="status" required defaultValue={editingCompany?.status || "Enabled"} className="w-full bg-[#334155] border border-[#475569] rounded-lg p-3 text-sm text-[#f1f5f9] outline-none">
-                <option value="Enabled">Enabled</option>
-                <option value="Disabled">Disabled</option>
-              </select>
+              <DashboardSelect
+                name="status"
+                required
+                defaultValue={editingCompany?.status || "Enabled"}
+                options={[
+                  { value: "Enabled", label: "Enabled" },
+                  { value: "Disabled", label: "Disabled" },
+                ]}
+              />
             </div>
             <DialogFooter><Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full h-11 font-bold">Save Company</Button></DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE: Company */}
+      <Dialog
+        open={!!companyPendingDelete}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCompanyPendingDelete(null);
+            setCompanyDeleteConfirmText('');
+          }
+        }}
+      >
+        <DialogContent className="bg-gradient-to-br from-[#1e293b] to-[#334155] border-rose-900/50 text-[#f1f5f9] p-8 rounded-xl max-w-[520px] shadow-2xl">
+          <DialogHeader className="border-b border-rose-900/40 pb-4 mb-4">
+            <DialogTitle className="text-xl font-bold text-white flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-rose-400" /> Delete Company
+            </DialogTitle>
+          </DialogHeader>
+          {companyPendingDelete && (
+            <div className="space-y-5">
+              <div className="bg-rose-950/20 border border-rose-900/40 rounded-lg p-4 space-y-2">
+                <p className="text-sm font-semibold text-white">{companyPendingDelete.name}</p>
+                <p className="text-xs leading-relaxed text-rose-100/80">
+                  This permanently removes the company tenant. Linked participants and assignments must be removed first.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs text-[#94a3b8]">Type <span className="font-bold text-white">{companyPendingDelete.name}</span> to confirm</Label>
+                <Input
+                  value={companyDeleteConfirmText}
+                  onChange={(event) => setCompanyDeleteConfirmText(event.target.value)}
+                  className="bg-[#0f172a] border-[#475569] h-11 text-white"
+                  autoComplete="off"
+                />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setCompanyPendingDelete(null);
+                    setCompanyDeleteConfirmText('');
+                  }}
+                  className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-11"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={deleteCompanyEntity}
+                  disabled={isDeletingCompany || companyDeleteConfirmText !== companyPendingDelete.name}
+                  className="bg-rose-700 text-white hover:bg-rose-600 h-11 disabled:opacity-40"
+                >
+                  <Trash2 className="h-4 w-4" /> {isDeletingCompany ? 'Deleting...' : 'Delete Company'}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

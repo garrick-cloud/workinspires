@@ -2,6 +2,8 @@ import pool from '@/lib/db';
 import type { Assignment } from '@/context/DashboardContext';
 import { ensureTenantSchema } from '@/lib/schema';
 import { slugifyCompany } from '@/lib/tenant';
+import { renderEvaluationEmail } from '@/lib/evaluationEmail';
+import { sendMail } from '@/lib/mailer';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +35,76 @@ async function resolveCompanySlug(value?: string) {
   return result.rows[0]?.slug ?? normalized;
 }
 
+function getAppUrl(request: Request, requestedAppUrl?: string) {
+  const envUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+  if (envUrl) return envUrl.replace(/\/$/, '');
+  if (requestedAppUrl) return requestedAppUrl.replace(/\/$/, '');
+
+  const forwardedHost = request.headers.get('x-forwarded-host');
+  const host = forwardedHost || request.headers.get('host');
+  if (host) {
+    const protocol = request.headers.get('x-forwarded-proto') || new URL(request.url).protocol.replace(':', '');
+    return `${protocol}://${host}`;
+  }
+
+  return new URL(request.url).origin;
+}
+
+async function sendAssignmentEmails({
+  assignmentId,
+  assignmentName,
+  dueDate,
+  appUrl,
+}: {
+  assignmentId: string;
+  assignmentName: string;
+  dueDate: string;
+  appUrl: string;
+}) {
+  const submissions = await pool.query<{
+    id: string;
+    participantName: string;
+    participantEmail: string | null;
+  }>(
+    `
+    SELECT
+      id,
+      participant_name AS "participantName",
+      participant_email AS "participantEmail"
+    FROM submissions
+    WHERE assignment_id = $1
+    ORDER BY created_at ASC
+    `,
+    [assignmentId]
+  );
+
+  let emailsSent = 0;
+  const emailFailures: string[] = [];
+
+  for (const submission of submissions.rows) {
+    if (!submission.participantEmail) continue;
+
+    try {
+      await sendMail({
+        to: submission.participantEmail,
+        subject: `New Assignment: ${assignmentName}`,
+        html: renderEvaluationEmail({
+          assignmentName,
+          participantName: submission.participantName,
+          dueDate,
+          evaluationUrl: `${appUrl}/submissions/${submission.id}`,
+        }),
+      });
+      emailsSent += 1;
+    } catch (error) {
+      console.error(`Failed to send assignment email to ${submission.participantEmail}:`, error);
+      emailFailures.push(submission.participantEmail);
+    }
+  }
+
+  return { emailsSent, emailFailures };
+}
+
 export async function PUT(request: Request, ctx: Context) {
   await ensureTenantSchema();
   const { id } = await ctx.params;
@@ -43,6 +115,9 @@ export async function PUT(request: Request, ctx: Context) {
   if (!body.name?.trim() || !formBlueprintId) {
     return Response.json({ error: 'Assignment name and form are required.' }, { status: 400 });
   }
+
+  const existing = await pool.query<{ published: boolean }>('SELECT published FROM assignments WHERE id = $1', [id]);
+  const wasPublished = existing.rows[0]?.published ?? false;
 
   const result = await pool.query<Assignment>(
     `
@@ -91,7 +166,21 @@ export async function PUT(request: Request, ctx: Context) {
     return Response.json({ error: 'Assignment not found.' }, { status: 404 });
   }
 
-  return Response.json(result.rows[0]);
+  let emailsSent = 0;
+  let emailFailures: string[] = [];
+
+  if (body.published && !wasPublished) {
+    const emailResult = await sendAssignmentEmails({
+      assignmentId: id,
+      assignmentName: body.name.trim(),
+      dueDate: body.rawDate || body.dueDate || 'Open',
+      appUrl: getAppUrl(request, body.appUrl),
+    });
+    emailsSent = emailResult.emailsSent;
+    emailFailures = emailResult.emailFailures;
+  }
+
+  return Response.json({ ...result.rows[0], emailsSent, emailFailures });
 }
 
 export async function DELETE(_request: Request, ctx: Context) {
