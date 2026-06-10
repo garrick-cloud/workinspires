@@ -1,7 +1,7 @@
 // src/features/forms/components/FormBuilderPage.tsx
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useDashboard } from '@/context/DashboardContext';
 import { FormField, FormFieldType, FormBlueprint } from '@/types/form';
 import type { FormAnswerValue } from '@/types/submission';
@@ -9,13 +9,22 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { 
-  Plus, Trash2, Move, Type, AlignLeft, UploadCloud, SlidersHorizontal, Award, ShieldAlert, ArrowLeft, Eye, Edit2, CheckCircle2, FlaskConical
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Plus, Trash2, Move, Type, AlignLeft, UploadCloud, SlidersHorizontal, Award, ShieldAlert, ArrowLeft, Eye, Edit2, CheckCircle2, FlaskConical, MoreHorizontal
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { apiDelete, apiPost, apiPut } from '@/lib/apiClient';
 import FormRenderer from '@/components/FormRenderer';
 import { buildAnswers, totalFromAnswers } from '@/lib/formScoring';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 type StudioViewState = 'listings' | 'builder' | 'viewer' | 'demo';
 
@@ -26,6 +35,9 @@ export default function FormBuilderPage() {
   // Workspace UI Layout View Controller state
   const [viewState, setViewState] = useState<StudioViewState>('listings');
   const [currentEditingId, setCurrentEditingId] = useState<string | null>(null);
+  const [formStatusFilter, setFormStatusFilter] = useState('all');
+  const [formTypeFilter, setFormTypeFilter] = useState('all');
+  const [selectedFormIds, setSelectedFormIds] = useState<string[]>([]);
 
   // Builder Canvas Configuration states (Completely scrubbed and empty)
   const [formName, setFormName] = useState('');
@@ -91,6 +103,40 @@ export default function FormBuilderPage() {
   const totalMaxScoreCalculated = useMemo(() => {
     return canvasFields.reduce((sum, f) => sum + (Number(f.points) || 0), 0);
   }, [canvasFields]);
+
+  const formTypeOptions = useMemo(() => {
+    return ['all', ...Array.from(new Set(forms.map(f => f.type).filter((type): type is string => Boolean(type))))];
+  }, [forms]);
+
+  const visibleForms = useMemo(() => {
+    return forms
+      .filter(form => formStatusFilter === 'all' || form.status === formStatusFilter)
+      .filter(form => formTypeFilter === 'all' || form.type === formTypeFilter);
+  }, [forms, formStatusFilter, formTypeFilter]);
+
+  const visibleFormIds = useMemo(() => visibleForms.map(form => form.id), [visibleForms]);
+  const selectedVisibleFormCount = useMemo(
+    () => visibleFormIds.filter(id => selectedFormIds.includes(id)).length,
+    [selectedFormIds, visibleFormIds]
+  );
+  const allVisibleFormsSelected = visibleFormIds.length > 0 && selectedVisibleFormCount === visibleFormIds.length;
+  const someVisibleFormsSelected = selectedVisibleFormCount > 0 && !allVisibleFormsSelected;
+
+  const toggleFormSelection = (formId: string) => {
+    setSelectedFormIds(ids => ids.includes(formId) ? ids.filter(id => id !== formId) : [...ids, formId]);
+  };
+
+  const toggleAllVisibleForms = () => {
+    setSelectedFormIds(ids => {
+      if (allVisibleFormsSelected) return ids.filter(id => !visibleFormIds.includes(id));
+      return Array.from(new Set([...ids, ...visibleFormIds]));
+    });
+  };
+
+  useEffect(() => {
+    const formIds = new Set(forms.map(form => form.id));
+    setSelectedFormIds(ids => ids.filter(id => formIds.has(id)));
+  }, [forms]);
 
   // ==========================================
   // DIRECTORY CRUD MANAGEMENT PIPELINES
@@ -180,6 +226,16 @@ export default function FormBuilderPage() {
     }
   };
 
+  const handleDeleteSelectedFormBlueprints = async () => {
+    if (selectedFormIds.length === 0) return;
+    if (confirm(`Delete ${selectedFormIds.length} selected form template${selectedFormIds.length !== 1 ? 's' : ''}?`)) {
+      await Promise.all(selectedFormIds.map(id => apiDelete(`/api/forms/${id}`)));
+      const idSet = new Set(selectedFormIds);
+      setForms(forms.filter(form => !idSet.has(form.id)));
+      setSelectedFormIds([]);
+    }
+  };
+
   const handleExitToMainDashboard = () => {
     setViewState('listings'); 
     setCurrentPage('dashboard'); // Updates the layout state at context layer smoothly
@@ -251,23 +307,76 @@ export default function FormBuilderPage() {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-5 sm:p-6 shadow-md overflow-hidden">
-            <div className="w-full overflow-x-auto rounded-xl border border-[#475569]/20">
+          <div data-shadcn-data-table className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-4 shadow-md">
+            <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-center gap-3 flex-wrap">
+                <Select value={formStatusFilter} onValueChange={setFormStatusFilter}>
+                  <SelectTrigger size="sm" className="w-[160px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1e293b] border border-[#475569] text-[#f1f5f9] rounded-lg">
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="Enabled">Enabled</SelectItem>
+                    <SelectItem value="Disabled">Disabled</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={formTypeFilter} onValueChange={setFormTypeFilter}>
+                  <SelectTrigger size="sm" className="w-[230px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9">
+                    <SelectValue placeholder="Type" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1e293b] border border-[#475569] text-[#f1f5f9] rounded-lg">
+                    {formTypeOptions.map(type => (
+                      <SelectItem key={type} value={type}>{type === 'all' ? 'All Template Types' : type}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {(formStatusFilter !== 'all' || formTypeFilter !== 'all' || selectedFormIds.length > 0) && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => { setFormStatusFilter('all'); setFormTypeFilter('all'); setSelectedFormIds([]); }} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border-[#475569]/50 rounded-lg bg-transparent h-8">
+                    Clear filters
+                  </Button>
+                )}
+                {selectedFormIds.length > 0 && (
+                  <Button type="button" variant="destructive" size="sm" onClick={handleDeleteSelectedFormBlueprints} className="text-xs h-8 px-3">
+                    <Trash2 className="h-3 w-3" /> Delete selected
+                  </Button>
+                )}
+              </div>
+              <span className="text-xs text-[#94a3b8]">
+                {selectedFormIds.length > 0 ? `${selectedFormIds.length} selected | ` : ''}{visibleForms.length} form template{visibleForms.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <div className="w-full overflow-x-auto overflow-y-visible rounded-xl border border-[#475569]/20">
               <Table className="text-xs min-w-[850px]">
                 <TableHeader className="bg-[#475569]">
                   <TableRow className="hover:bg-transparent border-[#475569]">
+                    <TableHead className="w-9 text-center">
+                      <Checkbox
+                        aria-label="Select all visible forms"
+                        checked={allVisibleFormsSelected ? true : someVisibleFormsSelected ? 'indeterminate' : false}
+                        onCheckedChange={toggleAllVisibleForms}
+                        className="mx-auto border-[#94a3b8] bg-[#334155]"
+                      />
+                    </TableHead>
                     <TableHead className="text-[#cbd5e1] font-semibold py-3.5 pl-4">Blueprint Spec Name</TableHead>
                     <TableHead className="text-[#cbd5e1] font-semibold">Logical Data Schema</TableHead>
                     <TableHead className="text-[#cbd5e1] font-semibold">Active Elements</TableHead>
                     <TableHead className="text-[#cbd5e1] font-semibold">Max Evaluation Points</TableHead>
                     <TableHead className="text-[#cbd5e1] font-semibold">Date Initialized</TableHead>
                     <TableHead className="text-[#cbd5e1] font-semibold">Status</TableHead>
-                    <TableHead className="text-[#cbd5e1] font-semibold text-right pr-6">Directory Actions (CRUD)</TableHead>
+                    <TableHead className="text-[#cbd5e1] font-semibold text-right pr-6">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {forms.map(form => (
+                  {visibleForms.map(form => (
                     <TableRow key={form.id} className="border-b border-[#475569]/30 hover:bg-[#475569]/20 transition-colors">
+                      <TableCell className="text-center">
+                        <Checkbox
+                          aria-label={`Select ${form.name}`}
+                          checked={selectedFormIds.includes(form.id)}
+                          onCheckedChange={() => toggleFormSelection(form.id)}
+                          className="mx-auto border-[#475569] bg-[#334155]"
+                        />
+                      </TableCell>
                       <TableCell className="font-bold text-white py-4 pl-4 max-w-[220px] truncate">{form.name}</TableCell>
                       <TableCell className="text-[#94a3b8] font-mono text-[10px]">{form.type}</TableCell>
                       <TableCell className="text-[#cbd5e1]">{form.questionCount || (form.structure?.fields?.length || 0)} elements</TableCell>
@@ -283,26 +392,44 @@ export default function FormBuilderPage() {
                         )}
                       </TableCell>
                       <TableCell className="py-4 text-right pr-4">
-                        <div className="flex justify-end gap-2 flex-wrap">
-                          <Button size="sm" onClick={() => handleLaunchInspectorViewer(form)} className="bg-[#334155] border border-[#475569] h-8 w-8 p-0 text-[#3b82f6] hover:bg-[#475569] transition-colors"><Eye className="h-4 w-4" /></Button>
-                          <Button
-                            size="sm"
-                            onClick={() => handleLaunchDemoTester(form)}
-                            disabled={!form.structure?.fields?.length}
-                            className="bg-[#334155] border border-[#475569] h-8 w-8 p-0 text-emerald-400 hover:bg-[#475569] transition-colors disabled:opacity-40"
-                            title="Test template"
-                          >
-                            <FlaskConical className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button size="sm" onClick={() => handleLaunchEditForm(form)} className="bg-[#334155] border border-[#475569] h-8 w-8 p-0 text-white hover:bg-[#475569] transition-colors"><Edit2 className="h-3.5 w-3.5" /></Button>
-                          <Button size="sm" onClick={() => handleDeleteFormBlueprintRecord(form.id)} className="bg-rose-950/20 border border-rose-900/40 text-rose-400 hover:bg-rose-900/30 h-8 w-8 p-0 transition-colors"><Trash2 className="h-4 w-4" /></Button>
-                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="h-8 w-8 rounded-md border border-[#475569]/60 bg-transparent text-[#f1f5f9] hover:bg-[#334155]"
+                              aria-label={`Open actions for ${form.name}`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-[180px] bg-[#1e293b] border-[#475569] text-[#f1f5f9]">
+                            <DropdownMenuItem onSelect={() => handleLaunchInspectorViewer(form)}>
+                              <Eye className="h-3.5 w-3.5" /> View
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => handleLaunchDemoTester(form)}
+                              disabled={!form.structure?.fields?.length}
+                              className="text-emerald-400"
+                            >
+                              <FlaskConical className="h-3.5 w-3.5" /> Test Template
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => handleLaunchEditForm(form)}>
+                              <Edit2 className="h-3.5 w-3.5" /> Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator className="bg-[#475569]/50" />
+                            <DropdownMenuItem onSelect={() => handleDeleteFormBlueprintRecord(form.id)} variant="destructive" className="text-rose-400 focus:text-rose-300">
+                              <Trash2 className="h-3.5 w-3.5" /> Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))}
-                  {forms.length === 0 && (
+                  {visibleForms.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center text-[#94a3b8] py-16 bg-[#0f172a]/20 font-medium">
+                      <TableCell colSpan={8} className="text-center text-[#94a3b8] py-16 bg-[#0f172a]/20 font-medium">
                         No customized configurations discovered in local state context registers. Launch the studio engine above to begin building.
                       </TableCell>
                     </TableRow>

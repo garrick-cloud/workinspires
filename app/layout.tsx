@@ -2,6 +2,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { DashboardProvider } from '@/context/DashboardContext';
+import ThemeSync from '@/components/ThemeSync';
 import { Inter } from "next/font/google";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +21,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={cn("dark", "font-sans", inter.variable)}>
       <body className="antialiased font-sans bg-[#0f172a] text-[#f1f5f9]">
+        <ThemeSync />
         <DashboardProvider>
           {children}
         </DashboardProvider>

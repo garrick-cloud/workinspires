@@ -3,23 +3,31 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  Users, CheckCircle, Star, Clock, Home, ListTodo,
+  Users, Clock, Home, ListTodo,
   FileSpreadsheet, BarChart3, Settings, Plus, Search,
-  Download, Trash2, GraduationCap, SlidersHorizontal, Check, X, Edit2, Eye, FileText, Mail, Building2, ArrowRight, EyeOff, Bell, Database, Globe, Save, RefreshCw,
+  Download, Trash2, GraduationCap, SlidersHorizontal, Check, X, Edit2, Eye, FileText, Mail, Building2, ArrowRight, EyeOff, Bell, Database, Globe, Save, RefreshCw, Moon, MoreHorizontal,
   Folder, FolderPlus, FolderOpen, ChevronRight
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/apiClient';
 import { DashboardOverview } from '@/components/dashboard/DashboardOverview';
 import { generateIndividualPDF } from '@/lib/generateReport';
+import { getShadcnDarkModePreference, setShadcnDarkModePreference } from '@/components/ThemeSync';
 import type {
   Assignment,
   CollectionFolder,
@@ -283,10 +291,78 @@ export default function WorkinspiresDashboard() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [autoReports, setAutoReports] = useState(false);
   const [timezone, setTimezone] = useState('Asia/Kuala_Lumpur');
+  const [shadcnDarkMode, setShadcnDarkMode] = useState(false);
+  const [themePreferenceHydrated, setThemePreferenceHydrated] = useState(false);
+  const [assignmentStatusFilter, setAssignmentStatusFilter] = useState('all');
+  const [assignmentPublishFilter, setAssignmentPublishFilter] = useState('all');
+  const [assignmentFormFilter, setAssignmentFormFilter] = useState('all');
+  const [assignmentSort, setAssignmentSort] = useState('dueDateAsc');
+  const [selectedAssignmentIds, setSelectedAssignmentIds] = useState<string[]>([]);
+  const [selectedFolderAssignmentIds, setSelectedFolderAssignmentIds] = useState<string[]>([]);
+  const [resultRemarkFilter, setResultRemarkFilter] = useState('all');
+  const [selectedResultIds, setSelectedResultIds] = useState<string[]>([]);
+  const [participantStatusFilter, setParticipantStatusFilter] = useState('all');
+  const [participantDepartmentFilter, setParticipantDepartmentFilter] = useState('all');
+  const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
+  const [reportProgramFilter, setReportProgramFilter] = useState('all');
+  const [reportScoreFilter, setReportScoreFilter] = useState('all');
+  const [selectedReportIds, setSelectedReportIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setShadcnDarkMode(getShadcnDarkModePreference());
+    setThemePreferenceHydrated(true);
+  }, []);
+
+  const handleShadcnDarkModeChange = () => {
+    const nextValue = !shadcnDarkMode;
+    setShadcnDarkMode(nextValue);
+    setShadcnDarkModePreference(nextValue);
+  };
+
+  const toggleAssignmentSelection = (assignmentId: string) => {
+    setSelectedAssignmentIds(ids =>
+      ids.includes(assignmentId) ? ids.filter(id => id !== assignmentId) : [...ids, assignmentId]
+    );
+  };
+
+  const toggleAllVisibleAssignments = () => {
+    setSelectedAssignmentIds(ids => {
+      if (allVisibleAssignmentsSelected) {
+        return ids.filter(id => !visibleRootAssignmentIds.includes(id));
+      }
+
+      return Array.from(new Set([...ids, ...visibleRootAssignmentIds]));
+    });
+  };
+
+  const clearAssignmentFilters = () => {
+    setAssignmentStatusFilter('all');
+    setAssignmentPublishFilter('all');
+    setAssignmentFormFilter('all');
+    setAssignmentSort('dueDateAsc');
+    setSelectedAssignmentIds([]);
+  };
+
+  const toggleSelection = (id: string, setIds: React.Dispatch<React.SetStateAction<string[]>>) => {
+    setIds(ids => ids.includes(id) ? ids.filter(existingId => existingId !== id) : [...ids, id]);
+  };
+
+  const toggleAllSelections = (
+    visibleIds: string[],
+    allVisibleSelected: boolean,
+    setIds: React.Dispatch<React.SetStateAction<string[]>>
+  ) => {
+    setIds(ids => {
+      if (allVisibleSelected) return ids.filter(id => !visibleIds.includes(id));
+      return Array.from(new Set([...ids, ...visibleIds]));
+    });
+  };
 
   // ==========================================
   // COMPUTED VALUES
   // ==========================================
+  const matchQuery = (text: string) => text.toLowerCase().includes(globalSearchQuery.toLowerCase());
+
   const activeCompaniesOptions = useMemo(() => companiesData.filter(c => c.status === 'Enabled' || c.status === 'active'), [companiesData]);
   const activeFormsOptions = useMemo(() => forms.filter(f => f.status === 'Enabled'), [forms]);
   const selectedCompany = useMemo(
@@ -322,26 +398,149 @@ export default function WorkinspiresDashboard() {
   }, [companiesData, participants]);
 
   const uniquePrograms = useMemo(() => ['all', ...Array.from(new Set(submissions.map(s => s.program)))], [submissions]);
-  const uniqueStatuses = ['all', 'Completed', 'Submitted', 'In Progress', 'Pending', 'Not Started'];
+  const uniqueStatuses = ['all', 'Completed', 'Submitted'];
   const adminRemarkOptions = ['Not Reviewed', 'Reviewed', 'Needs Follow Up', 'Approved', 'Flagged'];
+  const resultRemarkFilterOptions = ['all', ...adminRemarkOptions];
+  const participantStatusOptions = ['all', 'Enabled', 'Disabled'];
+  const assignmentStatusOptions = ['all', 'Enabled', 'Disabled'];
+  const assignmentPublishOptions = ['all', 'Published', 'Draft'];
+  const assignmentSortOptions = [
+    { value: 'dueDateAsc', label: 'Due Date Asc' },
+    { value: 'dueDateDesc', label: 'Due Date Desc' },
+    { value: 'nameAsc', label: 'Name A-Z' },
+    { value: 'nameDesc', label: 'Name Z-A' },
+    { value: 'publishedFirst', label: 'Published First' },
+    { value: 'draftFirst', label: 'Draft First' },
+  ];
 
   const filteredSubmissions = useMemo(() => {
     return submissions
+      .filter(s => s.status === 'Submitted' || s.status === 'Completed')
       .filter(s => programFilter === 'all' || s.program === programFilter)
       .filter(s => statusFilter === 'all' || s.status === statusFilter)
+      .filter(s => resultRemarkFilter === 'all' || (s.adminRemark || 'Not Reviewed') === resultRemarkFilter)
       .filter(s => globalSearchQuery === '' || matchQuery(s.participantName) || matchQuery(s.assignmentName) || matchQuery(s.program));
-  }, [submissions, programFilter, statusFilter, globalSearchQuery]);
+  }, [submissions, programFilter, statusFilter, resultRemarkFilter, globalSearchQuery]);
+
+  const filteredSubmissionIds = useMemo(() => filteredSubmissions.map(s => s.id), [filteredSubmissions]);
+  const selectedVisibleResultCount = useMemo(
+    () => filteredSubmissionIds.filter(id => selectedResultIds.includes(id)).length,
+    [filteredSubmissionIds, selectedResultIds]
+  );
+  const allVisibleResultsSelected = filteredSubmissionIds.length > 0 && selectedVisibleResultCount === filteredSubmissionIds.length;
+  const someVisibleResultsSelected = selectedVisibleResultCount > 0 && !allVisibleResultsSelected;
+
+  const participantDepartmentOptions = useMemo(() => {
+    return ['all', ...Array.from(new Set(tenantParticipants.map(p => p.department).filter(Boolean)))];
+  }, [tenantParticipants]);
+
+  const filteredParticipants = useMemo(() => {
+    return tenantParticipants
+      .filter(p => participantStatusFilter === 'all' || p.status === participantStatusFilter)
+      .filter(p => participantDepartmentFilter === 'all' || p.department === participantDepartmentFilter)
+      .filter(p => globalSearchQuery === '' || matchQuery(p.name) || matchQuery(p.email) || matchQuery(p.department));
+  }, [tenantParticipants, participantStatusFilter, participantDepartmentFilter, globalSearchQuery]);
+
+  const filteredParticipantIds = useMemo(() => filteredParticipants.map(p => p.id), [filteredParticipants]);
+  const selectedVisibleParticipantCount = useMemo(
+    () => filteredParticipantIds.filter(id => selectedParticipantIds.includes(id)).length,
+    [filteredParticipantIds, selectedParticipantIds]
+  );
+  const allVisibleParticipantsSelected = filteredParticipantIds.length > 0 && selectedVisibleParticipantCount === filteredParticipantIds.length;
+  const someVisibleParticipantsSelected = selectedVisibleParticipantCount > 0 && !allVisibleParticipantsSelected;
 
   const reportSubmissions = useMemo(() => {
     return submissions
       .filter(s => s.status === 'Submitted' || s.status === 'Completed')
+      .filter(s => reportProgramFilter === 'all' || s.program === reportProgramFilter)
+      .filter(s => reportScoreFilter === 'all' || (reportScoreFilter === 'Scored' ? s.score !== null : s.score === null))
       .filter(s =>
         globalSearchQuery === '' ||
         matchQuery(s.participantName) ||
         matchQuery(s.assignmentName) ||
         matchQuery(s.program)
       );
-  }, [submissions, globalSearchQuery]);
+  }, [submissions, reportProgramFilter, reportScoreFilter, globalSearchQuery]);
+
+  const reportSubmissionIds = useMemo(() => reportSubmissions.map(s => s.id), [reportSubmissions]);
+  const selectedVisibleReportCount = useMemo(
+    () => reportSubmissionIds.filter(id => selectedReportIds.includes(id)).length,
+    [reportSubmissionIds, selectedReportIds]
+  );
+  const allVisibleReportsSelected = reportSubmissionIds.length > 0 && selectedVisibleReportCount === reportSubmissionIds.length;
+  const someVisibleReportsSelected = selectedVisibleReportCount > 0 && !allVisibleReportsSelected;
+
+  const activeFolderAssignments = useMemo(() => {
+    if (!activeFolderView) return [];
+
+    return assignments
+      .filter(a => activeFolderView.assignmentIds.includes(a.id))
+      .filter(a => globalSearchQuery === '' || matchQuery(a.name) || matchQuery(a.formName) || matchQuery(a.assignedTo));
+  }, [assignments, activeFolderView, globalSearchQuery]);
+
+  const activeFolderAssignmentIds = useMemo(() => activeFolderAssignments.map(a => a.id), [activeFolderAssignments]);
+  const selectedVisibleFolderAssignmentCount = useMemo(
+    () => activeFolderAssignmentIds.filter(id => selectedFolderAssignmentIds.includes(id)).length,
+    [activeFolderAssignmentIds, selectedFolderAssignmentIds]
+  );
+  const allVisibleFolderAssignmentsSelected = activeFolderAssignmentIds.length > 0 && selectedVisibleFolderAssignmentCount === activeFolderAssignmentIds.length;
+  const someVisibleFolderAssignmentsSelected = selectedVisibleFolderAssignmentCount > 0 && !allVisibleFolderAssignmentsSelected;
+
+  const rootAssignments = useMemo(() => {
+    return assignments.filter(a => !folderCollectedAssignmentIds.includes(a.id));
+  }, [assignments, folderCollectedAssignmentIds]);
+
+  const assignmentFormOptions = useMemo(() => {
+    return ['all', ...Array.from(new Set(rootAssignments.map(a => a.formName).filter(Boolean)))];
+  }, [rootAssignments]);
+
+  const visibleRootAssignments = useMemo(() => {
+    const sortDate = (assignment: Assignment) => {
+      const value = assignment.rawDate || assignment.dueDate;
+      const timestamp = Date.parse(value);
+      return Number.isNaN(timestamp) ? 0 : timestamp;
+    };
+
+    return rootAssignments
+      .filter(a => globalSearchQuery === '' || matchQuery(a.name) || matchQuery(a.assignedTo) || matchQuery(a.formName))
+      .filter(a => assignmentStatusFilter === 'all' || a.status === assignmentStatusFilter)
+      .filter(a => assignmentPublishFilter === 'all' || (assignmentPublishFilter === 'Published' ? a.published : !a.published))
+      .filter(a => assignmentFormFilter === 'all' || a.formName === assignmentFormFilter)
+      .sort((a, b) => {
+        if (assignmentSort === 'dueDateAsc') return sortDate(a) - sortDate(b);
+        if (assignmentSort === 'dueDateDesc') return sortDate(b) - sortDate(a);
+        if (assignmentSort === 'nameAsc') return a.name.localeCompare(b.name);
+        if (assignmentSort === 'nameDesc') return b.name.localeCompare(a.name);
+        if (assignmentSort === 'publishedFirst') return Number(b.published) - Number(a.published);
+        if (assignmentSort === 'draftFirst') return Number(a.published) - Number(b.published);
+        return 0;
+      });
+  }, [rootAssignments, globalSearchQuery, assignmentStatusFilter, assignmentPublishFilter, assignmentFormFilter, assignmentSort]);
+
+  const visibleRootAssignmentIds = useMemo(() => visibleRootAssignments.map(a => a.id), [visibleRootAssignments]);
+  const selectedVisibleAssignmentCount = useMemo(
+    () => visibleRootAssignmentIds.filter(id => selectedAssignmentIds.includes(id)).length,
+    [selectedAssignmentIds, visibleRootAssignmentIds]
+  );
+  const allVisibleAssignmentsSelected = visibleRootAssignmentIds.length > 0 && selectedVisibleAssignmentCount === visibleRootAssignmentIds.length;
+  const someVisibleAssignmentsSelected = selectedVisibleAssignmentCount > 0 && !allVisibleAssignmentsSelected;
+
+  useEffect(() => {
+    const assignmentIds = new Set(assignments.map(a => a.id));
+    setSelectedAssignmentIds(ids => ids.filter(id => assignmentIds.has(id)));
+    setSelectedFolderAssignmentIds(ids => ids.filter(id => assignmentIds.has(id)));
+  }, [assignments]);
+
+  useEffect(() => {
+    const submissionIds = new Set(submissions.map(s => s.id));
+    setSelectedResultIds(ids => ids.filter(id => submissionIds.has(id)));
+    setSelectedReportIds(ids => ids.filter(id => submissionIds.has(id)));
+  }, [submissions]);
+
+  useEffect(() => {
+    const participantIds = new Set(participants.map(p => p.id));
+    setSelectedParticipantIds(ids => ids.filter(id => participantIds.has(id)));
+  }, [participants]);
 
   const trendData = [
     { name: 'Week 1', rate: 45 }, { name: 'Week 2', rate: 52 }, { name: 'Week 3', rate: 58 }, { name: 'Week 4', rate: 65 },
@@ -361,8 +560,6 @@ export default function WorkinspiresDashboard() {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return `${months[parseInt(month) - 1]} ${day}, ${year}`;
   };
-
-  const matchQuery = (text: string) => text.toLowerCase().includes(globalSearchQuery.toLowerCase());
 
   const handleCompanyScopeChange = async (companySlug: string) => {
     setSelectedCompanySlug(companySlug);
@@ -517,6 +714,8 @@ export default function WorkinspiresDashboard() {
     <Button
       type="button"
       variant="ghost"
+      data-nav-item
+      data-active={currentPage === page}
       onClick={() => navigate(page)}
       className={`w-full justify-start text-left flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[14px] font-medium transition-all h-auto ${currentPage === page
         ? 'bg-gradient-to-r from-[#3b82f6] to-transparent bg-[#3b82f6]/20 text-[#3b82f6] border-l-[3px] border-[#3b82f6] shadow-[inset_0_0_15px_rgba(59,130,246,0.1)]'
@@ -531,6 +730,17 @@ export default function WorkinspiresDashboard() {
       await apiDelete(`/api/assignments/${id}`);
       setAssignments(assignments.filter(a => a.id !== id));
       setFolders(folders.map(f => ({ ...f, assignmentIds: f.assignmentIds.filter(aid => aid !== id) })));
+    }
+  };
+
+  const deleteSelectedAssignments = async (ids: string[], clearSelection: () => void) => {
+    if (ids.length === 0) return;
+    if (confirm(`Remove ${ids.length} selected assignment${ids.length !== 1 ? 's' : ''}?`)) {
+      await Promise.all(ids.map(id => apiDelete(`/api/assignments/${id}`)));
+      const idSet = new Set(ids);
+      setAssignments(current => current.filter(a => !idSet.has(a.id)));
+      setFolders(current => current.map(f => ({ ...f, assignmentIds: f.assignmentIds.filter(aid => !idSet.has(aid)) })));
+      clearSelection();
     }
   };
 
@@ -604,6 +814,16 @@ export default function WorkinspiresDashboard() {
     if (confirm("Remove this participant?")) {
       await apiDelete(`/api/participants/${id}`);
       setParticipants(participants.filter(p => p.id !== id));
+    }
+  };
+
+  const deleteSelectedParticipants = async () => {
+    if (selectedParticipantIds.length === 0) return;
+    if (confirm(`Remove ${selectedParticipantIds.length} selected participant${selectedParticipantIds.length !== 1 ? 's' : ''}?`)) {
+      await Promise.all(selectedParticipantIds.map(id => apiDelete(`/api/participants/${id}`)));
+      const idSet = new Set(selectedParticipantIds);
+      setParticipants(current => current.filter(p => !idSet.has(p.id)));
+      setSelectedParticipantIds([]);
     }
   };
 
@@ -722,6 +942,21 @@ export default function WorkinspiresDashboard() {
     }
   };
 
+  const deleteSelectedSubmissions = async (ids: string[], clearSelection: () => void) => {
+    if (ids.length === 0) return;
+    if (confirm(`Remove ${ids.length} selected result entr${ids.length !== 1 ? 'ies' : 'y'}?`)) {
+      try {
+        await Promise.all(ids.map(id => apiDelete(`/api/submissions/${id}`)));
+        const idSet = new Set(ids);
+        setSubmissions(current => current.filter(s => !idSet.has(s.id)));
+        clearSelection();
+      } catch (error) {
+        console.error('Failed to delete selected submissions:', error);
+        alert('Failed to delete selected results. Please try again.');
+      }
+    }
+  };
+
   const handleViewSubmission = async (submission: Submission) => {
     try {
       const detail = await apiGet<SubmissionDetail>(`/api/submissions/${submission.id}`);
@@ -762,7 +997,7 @@ export default function WorkinspiresDashboard() {
   // PER-PAGE ACTION BUTTON
   // ==========================================
   const PageAction = () => {
-    const btnClass = "flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#3b82f6] to-[#60a5fa] text-white rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity shadow";
+    const btnClass = "flex items-center gap-1.5 px-3 h-9 bg-gradient-to-r from-[#3b82f6] to-[#60a5fa] text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity shadow";
     if (currentPage === 'assignments') return (
       <Button type="button" className={btnClass} onClick={() => { setEditingAssignment(null); setIsAssignmentOpen(true); }}>
         <Plus className="h-4 w-4" /> New Assignment
@@ -874,31 +1109,87 @@ export default function WorkinspiresDashboard() {
 
           {/* ASSIGNMENTS */}
           {currentPage === 'assignments' && (
-            <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md animate-in fade-in duration-200">
-              <div className="w-full overflow-x-auto rounded-xl border border-[#475569]/20">
-                <Table className="text-xs min-w-[950px]">
+            <div data-shadcn-data-table className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-4 shadow-md animate-in fade-in duration-200">
+              <div className="mb-4 flex flex-wrap items-center gap-3 border-b border-[#475569]/30 pb-4">
+                <DashboardSelect
+                  value={assignmentStatusFilter}
+                  onValueChange={setAssignmentStatusFilter}
+                  className="w-[145px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                  size="sm"
+                  options={assignmentStatusOptions.map(status => ({ value: status, label: status === 'all' ? 'All Statuses' : status }))}
+                />
+                <DashboardSelect
+                  value={assignmentPublishFilter}
+                  onValueChange={setAssignmentPublishFilter}
+                  className="w-[145px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                  size="sm"
+                  options={assignmentPublishOptions.map(status => ({ value: status, label: status === 'all' ? 'All Publish' : status }))}
+                />
+                <DashboardSelect
+                  value={assignmentFormFilter}
+                  onValueChange={setAssignmentFormFilter}
+                  className="w-[190px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                  size="sm"
+                  options={assignmentFormOptions.map(formName => ({ value: formName, label: formName === 'all' ? 'All Templates' : formName }))}
+                />
+                <DashboardSelect
+                  value={assignmentSort}
+                  onValueChange={setAssignmentSort}
+                  className="w-[170px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                  size="sm"
+                  options={assignmentSortOptions}
+                />
+                {(assignmentStatusFilter !== 'all' || assignmentPublishFilter !== 'all' || assignmentFormFilter !== 'all' || assignmentSort !== 'dueDateAsc' || selectedAssignmentIds.length > 0) && (
+                  <Button type="button" variant="outline" size="sm" onClick={clearAssignmentFilters} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border-[#475569]/50 rounded-lg bg-transparent h-8">
+                    <X className="h-3 w-3" /> Clear
+                  </Button>
+                )}
+                {selectedAssignmentIds.length > 0 && (
+                  <Button type="button" variant="destructive" size="sm" onClick={() => deleteSelectedAssignments(selectedAssignmentIds, () => setSelectedAssignmentIds([]))} className="text-xs h-8 px-3">
+                    <Trash2 className="h-3 w-3" /> Delete selected
+                  </Button>
+                )}
+                <span className="text-xs text-[#94a3b8] ml-auto">
+                  {selectedAssignmentIds.length > 0 ? `${selectedAssignmentIds.length} selected · ` : ''}{visibleRootAssignments.length} shown
+                </span>
+              </div>
+              <div className="w-full overflow-x-auto overflow-y-visible rounded-xl border border-[#475569]/20">
+                <Table className="text-xs min-w-[1020px]">
                   <TableHeader className="bg-[#475569]">
                     <TableRow className="border-[#475569] hover:bg-[#475569]">
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Assignment Name</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Form Used</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Assigned Company</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Due Date</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Publish Status</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Status</TableHead>
-                      <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px] text-right">Actions</TableHead>
+                      <TableHead className="w-9 px-2 text-center">
+                        <Checkbox
+                          aria-label="Select all visible assignments"
+                          checked={allVisibleAssignmentsSelected ? true : someVisibleAssignmentsSelected ? 'indeterminate' : false}
+                          onCheckedChange={toggleAllVisibleAssignments}
+                          className="mx-auto border-[#94a3b8] bg-[#334155]"
+                        />
+                      </TableHead>
+                      <TableHead className="px-3 text-[#cbd5e1] font-bold uppercase text-[10px] tracking-wide">Assignment Name</TableHead>
+                      <TableHead className="px-3 text-[#cbd5e1] font-bold uppercase text-[10px] tracking-wide">Form Used</TableHead>
+                      <TableHead className="px-3 text-[#cbd5e1] font-bold uppercase text-[10px] tracking-wide">Assigned Company</TableHead>
+                      <TableHead className="px-3 text-[#cbd5e1] font-bold uppercase text-[10px] tracking-wide">Due Date</TableHead>
+                      <TableHead className="px-3 text-[#cbd5e1] font-bold uppercase text-[10px] tracking-wide">Publish Status</TableHead>
+                      <TableHead className="px-3 text-[#cbd5e1] font-bold uppercase text-[10px] tracking-wide">Status</TableHead>
+                      <TableHead className="px-3 text-[#cbd5e1] font-bold uppercase text-[10px] tracking-wide text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {assignments
-                      .filter(a => !folderCollectedAssignmentIds.includes(a.id))
-                      .filter(a => globalSearchQuery === '' || matchQuery(a.name) || matchQuery(a.assignedTo))
-                      .map(asg => (
+                    {visibleRootAssignments.map(asg => (
                         <TableRow key={asg.id} className={`border-b border-[#475569]/30 hover:bg-[#475569]/40 ${asg.status === 'Disabled' ? 'opacity-50' : ''}`}>
-                          <TableCell className="font-bold text-white py-4">{asg.name}</TableCell>
-                          <TableCell className="text-[#f1f5f9] py-4">{asg.formName}</TableCell>
-                          <TableCell className="text-[#cbd5e1] py-4">{asg.assignedTo}</TableCell>
-                          <TableCell className="text-[#94a3b8] py-4">{asg.dueDate}</TableCell>
-                          <TableCell className="py-4">
+                          <TableCell className="px-2 py-3 text-center">
+                            <Checkbox
+                              aria-label={`Select ${asg.name}`}
+                              checked={selectedAssignmentIds.includes(asg.id)}
+                              onCheckedChange={() => toggleAssignmentSelection(asg.id)}
+                              className="mx-auto border-[#475569] bg-[#334155]"
+                            />
+                          </TableCell>
+                          <TableCell className="px-3 py-3 font-bold text-white">{asg.name}</TableCell>
+                          <TableCell className="px-3 py-3 text-[#f1f5f9]">{asg.formName}</TableCell>
+                          <TableCell className="px-3 py-3 text-[#cbd5e1]">{asg.assignedTo}</TableCell>
+                          <TableCell className="px-3 py-3 text-[#94a3b8]">{asg.dueDate}</TableCell>
+                          <TableCell className="px-3 py-3">
                             {asg.published ? (
                               <div>
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-bold uppercase border text-[11px] bg-[#10b981]/15 text-[#10b981] border-[#10b981]/30">
@@ -912,38 +1203,64 @@ export default function WorkinspiresDashboard() {
                               </span>
                             )}
                           </TableCell>
-                          <TableCell className="py-4">
+                          <TableCell className="px-3 py-3">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-bold uppercase border text-[11px] ${asg.status === 'Enabled' ? 'bg-[#3b82f6]/15 text-[#3b82f6] border-[#3b82f6]/30' : 'bg-slate-500/10 text-slate-400 border-slate-500/20'}`}>
                               {asg.status === 'Enabled' ? <Check className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />} {asg.status}
                             </span>
                           </TableCell>
-                          <TableCell className="py-4 text-right">
-                            <div className="flex justify-end gap-2">
-                              {!asg.published && (
-                                <Button size="sm" onClick={() => handlePublishAssignment(asg.id)} className="bg-[#10b981]/10 border border-[#10b981]/40 text-[#10b981] hover:bg-[#10b981]/20 h-8 px-2.5 text-[11px] font-bold gap-1">
-                                  <Mail className="h-3 w-3" /> Publish
+                          <TableCell className="px-3 py-3 text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  className="h-8 w-8 rounded-md border border-[#475569]/60 bg-transparent text-[#f1f5f9] hover:bg-[#334155]"
+                                  aria-label={`Open actions for ${asg.name}`}
+                                >
+                                  <MoreHorizontal className="h-4 w-4" />
                                 </Button>
-                              )}
-                              {asg.published && (
-                                <Button size="sm" onClick={() => {
-                                  const shareUrl = `${window.location.origin}/demo/fill/${asg.id}`;
-                                  navigator.clipboard.writeText(shareUrl);
-                                  alert('Shareable form link copied to clipboard!');
-                                }} className="bg-[#1e293b] border border-[#3b82f6]/40 text-[#60a5fa] hover:bg-[#334155] h-8 w-8 p-0" title="Copy shareable link">
-                                  <Globe className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                              <Button size="sm" onClick={() => setViewingAssignment(asg)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
-                              <Button size="sm" onClick={() => { setEditingAssignment(asg); setIsAssignmentOpen(true); }} className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 w-8 p-0"><Edit2 className="h-3.5 w-3.5" /></Button>
-                              <Button size="sm" onClick={() => deleteAssignment(asg.id)} className="bg-rose-950/20 border border-rose-900/50 text-rose-400 hover:bg-rose-900/20 h-8 w-8 p-0"><Trash2 className="h-3.5 w-3.5" /></Button>
-                            </div>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="min-w-[170px] bg-[#1e293b] border-[#475569] text-[#f1f5f9]">
+                                {!asg.published ? (
+                                  <DropdownMenuItem onSelect={() => handlePublishAssignment(asg.id)} className="text-[#10b981]">
+                                    <Mail className="h-3.5 w-3.5" /> Publish
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem onSelect={() => {
+                                    const shareUrl = `${window.location.origin}/demo/fill/${asg.id}`;
+                                    navigator.clipboard.writeText(shareUrl);
+                                    alert('Shareable form link copied to clipboard!');
+                                  }}>
+                                    <Globe className="h-3.5 w-3.5" /> Copy Link
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuSeparator className="bg-[#475569]/50" />
+                                <DropdownMenuItem onSelect={() => setViewingAssignment(asg)}>
+                                  <Eye className="h-3.5 w-3.5" /> View
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => { setEditingAssignment(asg); setIsAssignmentOpen(true); }}>
+                                  <Edit2 className="h-3.5 w-3.5" /> Edit
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => deleteAssignment(asg.id)} variant="destructive" className="text-rose-400 focus:text-rose-300">
+                                  <Trash2 className="h-3.5 w-3.5" /> Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       ))}
-                    {assignments.filter(a => !folderCollectedAssignmentIds.includes(a.id) && (globalSearchQuery === '' || matchQuery(a.name))).length === 0 && (
-                      <TableRow><TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">No uncollected root assignments found.</TableCell></TableRow>
+                    {visibleRootAssignments.length === 0 && (
+                      <TableRow><TableCell colSpan={8} className="text-center text-[#94a3b8] py-10">No uncollected root assignments found.</TableCell></TableRow>
                     )}
                   </TableBody>
+                  <TableFooter className="bg-[#1e293b] border-t border-[#475569]">
+                    <TableRow className="border-[#475569] hover:bg-transparent">
+                      <TableCell colSpan={8} className="py-3 text-xs text-[#94a3b8]">
+                        Showing {visibleRootAssignments.length} of {rootAssignments.length} root assignment{rootAssignments.length === 1 ? '' : 's'} · {selectedVisibleAssignmentCount} selected in current view
+                      </TableCell>
+                    </TableRow>
+                  </TableFooter>
                 </Table>
               </div>
             </div>
@@ -970,11 +1287,37 @@ export default function WorkinspiresDashboard() {
                     {activeFolderView.description || "No description recorded for this configuration track."}
                   </p>
 
-                  <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md">
+                  <div data-shadcn-data-table className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-4 shadow-md">
+                    <div className="mb-3 flex items-center justify-between gap-3 text-xs text-[#94a3b8]">
+                      <span>
+                        {selectedFolderAssignmentIds.length > 0 ? `${selectedFolderAssignmentIds.length} selected · ` : ''}
+                        {activeFolderAssignments.length} linked assignment{activeFolderAssignments.length !== 1 ? 's' : ''}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {selectedFolderAssignmentIds.length > 0 && (
+                          <>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setSelectedFolderAssignmentIds([])} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border-[#475569]/50 rounded-lg bg-transparent h-8">
+                              <X className="h-3 w-3" /> Clear selection
+                            </Button>
+                            <Button type="button" variant="destructive" size="sm" onClick={() => deleteSelectedAssignments(selectedFolderAssignmentIds, () => setSelectedFolderAssignmentIds([]))} className="text-xs h-8 px-3">
+                              <Trash2 className="h-3 w-3" /> Delete selected
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
                     <div className="w-full overflow-x-auto rounded-xl">
                       <Table className="text-xs">
                         <TableHeader className="bg-[#475569]">
                           <TableRow className="border-[#475569] hover:bg-[#475569]">
+                            <TableHead className="w-9 text-center">
+                              <Checkbox
+                                aria-label="Select all visible folder assignments"
+                                checked={allVisibleFolderAssignmentsSelected ? true : someVisibleFolderAssignmentsSelected ? 'indeterminate' : false}
+                                onCheckedChange={() => toggleAllSelections(activeFolderAssignmentIds, allVisibleFolderAssignmentsSelected, setSelectedFolderAssignmentIds)}
+                                className="mx-auto border-[#94a3b8] bg-[#334155]"
+                              />
+                            </TableHead>
                             <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Assignment Name</TableHead>
                             <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Form Used</TableHead>
                             <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Assigned Company</TableHead>
@@ -983,22 +1326,38 @@ export default function WorkinspiresDashboard() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {assignments
-                            .filter(a => activeFolderView.assignmentIds.includes(a.id))
-                            .filter(a => globalSearchQuery === '' || matchQuery(a.name))
-                            .map(asg => (
+                          {activeFolderAssignments.map(asg => (
                               <TableRow key={asg.id} className="border-b border-[#475569]/30 hover:bg-[#475569]/40">
+                                <TableCell className="text-center">
+                                  <Checkbox
+                                    aria-label={`Select ${asg.name}`}
+                                    checked={selectedFolderAssignmentIds.includes(asg.id)}
+                                    onCheckedChange={() => toggleSelection(asg.id, setSelectedFolderAssignmentIds)}
+                                    className="mx-auto border-[#475569] bg-[#334155]"
+                                  />
+                                </TableCell>
                                 <TableCell className="font-bold text-white py-4">{asg.name}</TableCell>
                                 <TableCell className="text-[#f1f5f9] py-4">{asg.formName}</TableCell>
                                 <TableCell className="text-[#cbd5e1] py-4">{asg.assignedTo}</TableCell>
                                 <TableCell className="text-[#94a3b8] py-4">{asg.dueDate}</TableCell>
                                 <TableCell className="py-4 text-right">
-                                  <Button size="sm" onClick={() => setViewingAssignment(asg)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button type="button" variant="ghost" size="icon-sm" className="h-8 w-8 rounded-md border border-[#475569]/60 bg-transparent text-[#f1f5f9] hover:bg-[#334155]" aria-label={`Open actions for ${asg.name}`}>
+                                        <MoreHorizontal className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="min-w-[150px] bg-[#1e293b] border-[#475569] text-[#f1f5f9]">
+                                      <DropdownMenuItem onSelect={() => setViewingAssignment(asg)}>
+                                        <Eye className="h-3.5 w-3.5" /> View
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </TableCell>
                               </TableRow>
                             ))}
-                          {assignments.filter(a => activeFolderView.assignmentIds.includes(a.id)).length === 0 && (
-                            <TableRow><TableCell colSpan={5} className="text-center text-[#94a3b8] py-10">No items map inside this cluster folder context registry.</TableCell></TableRow>
+                          {activeFolderAssignments.length === 0 && (
+                            <TableRow><TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">No items map inside this cluster folder context registry.</TableCell></TableRow>
                           )}
                         </TableBody>
                       </Table>
@@ -1062,19 +1421,41 @@ export default function WorkinspiresDashboard() {
                   size="sm"
                   options={uniqueStatuses.map(s => ({ value: s, label: s === 'all' ? 'All Statuses' : s }))}
                 />
-                {(programFilter !== 'all' || statusFilter !== 'all') && (
-                  <Button type="button" variant="outline" size="sm" onClick={() => { setProgramFilter('all'); setStatusFilter('all'); }} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border-[#475569]/50 rounded-lg bg-transparent h-8">
+                <DashboardSelect
+                  value={resultRemarkFilter}
+                  onValueChange={setResultRemarkFilter}
+                  className="w-[180px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                  size="sm"
+                  options={resultRemarkFilterOptions.map(remark => ({ value: remark, label: remark === 'all' ? 'All Remarks' : remark }))}
+                />
+                {(programFilter !== 'all' || statusFilter !== 'all' || resultRemarkFilter !== 'all' || selectedResultIds.length > 0) && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => { setProgramFilter('all'); setStatusFilter('all'); setResultRemarkFilter('all'); setSelectedResultIds([]); }} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border-[#475569]/50 rounded-lg bg-transparent h-8">
                     <X className="h-3 w-3" /> Clear filters
                   </Button>
                 )}
-                <span className="text-xs text-[#94a3b8] ml-auto">{filteredSubmissions.length} result{filteredSubmissions.length !== 1 ? 's' : ''}</span>
+                {selectedResultIds.length > 0 && (
+                  <Button type="button" variant="destructive" size="sm" onClick={() => deleteSelectedSubmissions(selectedResultIds, () => setSelectedResultIds([]))} className="text-xs h-8 px-3">
+                    <Trash2 className="h-3 w-3" /> Delete selected
+                  </Button>
+                )}
+                <span className="text-xs text-[#94a3b8] ml-auto">
+                  {selectedResultIds.length > 0 ? `${selectedResultIds.length} selected · ` : ''}{filteredSubmissions.length} result{filteredSubmissions.length !== 1 ? 's' : ''}
+                </span>
               </div>
 
-              <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md">
+              <div data-shadcn-data-table className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-4 shadow-md">
                 <div className="w-full overflow-x-auto rounded-xl border border-[#475569]/20">
                   <Table className="text-xs min-w-[900px]">
                     <TableHeader className="bg-[#475569]">
                       <TableRow className="border-[#475569] hover:bg-[#475569]">
+                        <TableHead className="w-9 text-center">
+                          <Checkbox
+                            aria-label="Select all visible results"
+                            checked={allVisibleResultsSelected ? true : someVisibleResultsSelected ? 'indeterminate' : false}
+                            onCheckedChange={() => toggleAllSelections(filteredSubmissionIds, allVisibleResultsSelected, setSelectedResultIds)}
+                            className="mx-auto border-[#94a3b8] bg-[#334155]"
+                          />
+                        </TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Participant</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Program</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Assignment</TableHead>
@@ -1088,6 +1469,14 @@ export default function WorkinspiresDashboard() {
                     <TableBody>
                       {filteredSubmissions.map(sub => (
                         <TableRow key={sub.id} className="border-b border-[#475569]/30 hover:bg-[#475569]/40">
+                          <TableCell className="text-center">
+                            <Checkbox
+                              aria-label={`Select result for ${sub.participantName}`}
+                              checked={selectedResultIds.includes(sub.id)}
+                              onCheckedChange={() => toggleSelection(sub.id, setSelectedResultIds)}
+                              className="mx-auto border-[#475569] bg-[#334155]"
+                            />
+                          </TableCell>
                           <TableCell className="font-bold text-white py-4">{sub.participantName}</TableCell>
                           <TableCell className="text-[#cbd5e1] py-4">{sub.program}</TableCell>
                           <TableCell className="text-[#cbd5e1] py-4">{sub.assignmentName}</TableCell>
@@ -1107,15 +1496,26 @@ export default function WorkinspiresDashboard() {
                           <TableCell className="py-4"><SubmissionStatusBadge status={sub.status} /></TableCell>
                           <TableCell className="py-4 text-[#cbd5e1]">{sub.adminRemark || 'Not Reviewed'}</TableCell>
                           <TableCell className="py-4 text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button size="sm" onClick={() => handleViewSubmission(sub)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
-                              <Button size="sm" onClick={() => { setEditingSubmission(sub); setIsSubmissionOpen(true); }} className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 w-8 p-0"><Edit2 className="h-3.5 w-3.5" /></Button>
-                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button type="button" variant="ghost" size="icon-sm" className="h-8 w-8 rounded-md border border-[#475569]/60 bg-transparent text-[#f1f5f9] hover:bg-[#334155]" aria-label={`Open actions for ${sub.participantName}`}>
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="min-w-[150px] bg-[#1e293b] border-[#475569] text-[#f1f5f9]">
+                                <DropdownMenuItem onSelect={() => handleViewSubmission(sub)}>
+                                  <Eye className="h-3.5 w-3.5" /> View
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => { setEditingSubmission(sub); setIsSubmissionOpen(true); }}>
+                                  <Edit2 className="h-3.5 w-3.5" /> Review
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       ))}
                       {filteredSubmissions.length === 0 && (
-                        <TableRow><TableCell colSpan={8} className="text-center text-[#94a3b8] py-10">No results match the current filters.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={9} className="text-center text-[#94a3b8] py-10">No results match the current filters.</TableCell></TableRow>
                       )}
                     </TableBody>
                   </Table>
@@ -1127,14 +1527,53 @@ export default function WorkinspiresDashboard() {
           {/* PARTICIPANTS */}
           {currentPage === 'participants' && (
             <div className="space-y-4 animate-in fade-in duration-200">
-              <div className="text-xs text-[#94a3b8]">
-                Showing isolated tenant roster for <span className="font-bold text-[#3b82f6]">{selectedCompany?.name || 'No company selected'}</span>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="text-xs text-[#94a3b8]">
+                  Showing isolated tenant roster for <span className="font-bold text-[#3b82f6]">{selectedCompany?.name || 'No company selected'}</span>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <DashboardSelect
+                    value={participantStatusFilter}
+                    onValueChange={setParticipantStatusFilter}
+                    className="w-[160px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                    size="sm"
+                    options={participantStatusOptions.map(s => ({ value: s, label: s === 'all' ? 'All Statuses' : s }))}
+                  />
+                  <DashboardSelect
+                    value={participantDepartmentFilter}
+                    onValueChange={setParticipantDepartmentFilter}
+                    className="w-[190px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                    size="sm"
+                    options={participantDepartmentOptions.map(dept => ({ value: dept, label: dept === 'all' ? 'All Departments' : dept }))}
+                  />
+                  {(participantStatusFilter !== 'all' || participantDepartmentFilter !== 'all' || selectedParticipantIds.length > 0) && (
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setParticipantStatusFilter('all'); setParticipantDepartmentFilter('all'); setSelectedParticipantIds([]); }} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border-[#475569]/50 rounded-lg bg-transparent h-8">
+                      <X className="h-3 w-3" /> Clear filters
+                    </Button>
+                  )}
+                  {selectedParticipantIds.length > 0 && (
+                    <Button type="button" variant="destructive" size="sm" onClick={deleteSelectedParticipants} className="text-xs h-8 px-3">
+                      <Trash2 className="h-3 w-3" /> Delete selected
+                    </Button>
+                  )}
+                  <span className="text-xs text-[#94a3b8]">
+                    {selectedParticipantIds.length > 0 ? `${selectedParticipantIds.length} selected | ` : ''}{filteredParticipants.length} participant{filteredParticipants.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
               </div>
-              <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md">
+              <div data-shadcn-data-table className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-4 shadow-md">
                 <div className="w-full overflow-x-auto rounded-xl border border-[#475569]/20">
                   <Table className="text-xs min-w-[900px]">
                     <TableHeader className="bg-[#475569]">
                       <TableRow className="border-[#475569] hover:bg-[#475569]">
+                        <TableHead className="w-9 text-center">
+                          <Checkbox
+                            aria-label="Select all visible participants"
+                            checked={allVisibleParticipantsSelected ? true : someVisibleParticipantsSelected ? 'indeterminate' : false}
+                            onCheckedChange={() => toggleAllSelections(filteredParticipantIds, allVisibleParticipantsSelected, setSelectedParticipantIds)}
+                            className="mx-auto border-[#94a3b8] bg-[#334155]"
+                          />
+                        </TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Name</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Company</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Department</TableHead>
@@ -1144,10 +1583,16 @@ export default function WorkinspiresDashboard() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {tenantParticipants
-                        .filter(p => globalSearchQuery === '' || matchQuery(p.name) || matchQuery(p.email))
-                        .map(part => (
+                      {filteredParticipants.map(part => (
                           <TableRow key={part.id} className={`border-b border-[#475569]/30 hover:bg-[#475569]/40 ${part.status === 'Disabled' ? 'opacity-50' : ''}`}>
+                            <TableCell className="text-center">
+                              <Checkbox
+                                aria-label={`Select ${part.name}`}
+                                checked={selectedParticipantIds.includes(part.id)}
+                                onCheckedChange={() => toggleSelection(part.id, setSelectedParticipantIds)}
+                                className="mx-auto border-[#475569] bg-[#334155]"
+                              />
+                            </TableCell>
                             <TableCell className="font-bold text-white py-4">{part.name}</TableCell>
                             <TableCell className="text-[#cbd5e1] py-4">{part.company}</TableCell>
                             <TableCell className="text-[#cbd5e1] py-4">{part.department}</TableCell>
@@ -1158,16 +1603,30 @@ export default function WorkinspiresDashboard() {
                               </span>
                             </TableCell>
                             <TableCell className="py-4 text-right">
-                              <div className="flex justify-end gap-2">
-                                <Button size="sm" onClick={() => setViewingParticipant(part)} className="bg-[#334155] border border-[#475569] text-[#3b82f6] hover:bg-[#475569] h-8 w-8 p-0"><Eye className="h-3.5 w-3.5" /></Button>
-                                <Button size="sm" onClick={() => { setEditingParticipant(part); setIsParticipantOpen(true); }} className="bg-[#334155] border border-[#475569] text-white hover:bg-[#475569] h-8 w-8 p-0"><Edit2 className="h-3.5 w-3.5" /></Button>
-                                <Button size="sm" onClick={() => deleteParticipant(part.id)} className="bg-rose-950/20 border border-rose-900/50 text-rose-400 hover:bg-rose-900/20 h-8 w-8 p-0"><Trash2 className="h-3.5 w-3.5" /></Button>
-                              </div>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button type="button" variant="ghost" size="icon-sm" className="h-8 w-8 rounded-md border border-[#475569]/60 bg-transparent text-[#f1f5f9] hover:bg-[#334155]" aria-label={`Open actions for ${part.name}`}>
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="min-w-[150px] bg-[#1e293b] border-[#475569] text-[#f1f5f9]">
+                                  <DropdownMenuItem onSelect={() => setViewingParticipant(part)}>
+                                    <Eye className="h-3.5 w-3.5" /> View
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onSelect={() => { setEditingParticipant(part); setIsParticipantOpen(true); }}>
+                                    <Edit2 className="h-3.5 w-3.5" /> Edit
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator className="bg-[#475569]/50" />
+                                  <DropdownMenuItem onSelect={() => deleteParticipant(part.id)} variant="destructive" className="text-rose-400 focus:text-rose-300">
+                                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </TableCell>
                           </TableRow>
                         ))}
-                      {tenantParticipants.length === 0 && (
-                        <TableRow><TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">No participants found.</TableCell></TableRow>
+                      {filteredParticipants.length === 0 && (
+                        <TableRow><TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">No participants found.</TableCell></TableRow>
                       )}
                     </TableBody>
                   </Table>
@@ -1208,12 +1667,45 @@ export default function WorkinspiresDashboard() {
           {/* REPORTS VIEW PANEL */}
           {currentPage === 'reports' && (
             <div className="space-y-6 animate-in fade-in duration-200">
-              <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 shadow-md">
+              <div data-shadcn-data-table className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-4 shadow-md">
                 
                 {/* PANEL HEADER */}
                 <div className="mb-6 pb-6 border-b border-[#475569]/30">
                   <h3 className="text-base font-bold text-white">Submitted Participant Reports</h3>
                   <p className="text-xs text-[#94a3b8] mt-0.5">Generate individual PDF reports from submitted records in the submissions database.</p>
+                  <div className="mt-4 flex items-center gap-3 flex-wrap">
+                    <DashboardSelect
+                      value={reportProgramFilter}
+                      onValueChange={setReportProgramFilter}
+                      className="w-[180px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                      size="sm"
+                      options={uniquePrograms.map(p => ({ value: p, label: p === 'all' ? 'All Programs' : p }))}
+                    />
+                    <DashboardSelect
+                      value={reportScoreFilter}
+                      onValueChange={setReportScoreFilter}
+                      className="w-[160px] bg-[#1e293b] border border-[#475569] rounded-lg px-3 py-2 text-xs text-[#f1f5f9] h-9"
+                      size="sm"
+                      options={[
+                        { value: 'all', label: 'All Scores' },
+                        { value: 'Scored', label: 'Scored' },
+                        { value: 'Ungraded', label: 'Ungraded' },
+                      ]}
+                    />
+                    {(reportProgramFilter !== 'all' || reportScoreFilter !== 'all' || selectedReportIds.length > 0) && (
+                      <Button type="button" variant="outline" size="sm" onClick={() => { setReportProgramFilter('all'); setReportScoreFilter('all'); setSelectedReportIds([]); }} className="text-xs text-[#94a3b8] hover:text-white flex items-center gap-1 px-2 py-1.5 border-[#475569]/50 rounded-lg bg-transparent h-8">
+                        <X className="h-3 w-3" /> Clear filters
+                      </Button>
+                    )}
+                    {selectedReportIds.length > 0 && (
+                      <Button type="button" variant="destructive" size="sm" onClick={() => deleteSelectedSubmissions(selectedReportIds, () => setSelectedReportIds([]))} className="text-xs h-8 px-3">
+                        <Trash2 className="h-3 w-3" /> Delete selected
+                      </Button>
+                    )}
+                    <span className="text-xs text-[#94a3b8] ml-auto">
+                      {selectedReportIds.length > 0 ? `${selectedReportIds.length} selected | ` : ''}{reportSubmissions.length} report{reportSubmissions.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
                 </div>
 
                 {/* COMPACT MATRIX LOG TABLE */}
@@ -1221,6 +1713,14 @@ export default function WorkinspiresDashboard() {
                   <Table className="text-xs min-w-[850px]">
                     <TableHeader className="bg-[#475569]">
                       <TableRow className="border-[#475569] hover:bg-[#475569]">
+                        <TableHead className="w-9 text-center">
+                          <Checkbox
+                            aria-label="Select all visible reports"
+                            checked={allVisibleReportsSelected ? true : someVisibleReportsSelected ? 'indeterminate' : false}
+                            onCheckedChange={() => toggleAllSelections(reportSubmissionIds, allVisibleReportsSelected, setSelectedReportIds)}
+                            className="mx-auto border-[#94a3b8] bg-[#334155]"
+                          />
+                        </TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Participant</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Program</TableHead>
                         <TableHead className="text-[#cbd5e1] font-semibold uppercase text-[11px]">Assignment</TableHead>
@@ -1232,12 +1732,20 @@ export default function WorkinspiresDashboard() {
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">
+                          <TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">
                             Loading report logs from database...
                           </TableCell>
                         </TableRow>
                       ) : reportSubmissions.map(sub => (
                         <TableRow key={sub.id} className="border-b border-[#475569]/30 hover:bg-[#475569]/40">
+                          <TableCell className="text-center">
+                            <Checkbox
+                              aria-label={`Select report for ${sub.participantName}`}
+                              checked={selectedReportIds.includes(sub.id)}
+                              onCheckedChange={() => toggleSelection(sub.id, setSelectedReportIds)}
+                              className="mx-auto border-[#475569] bg-[#334155]"
+                            />
+                          </TableCell>
                           <TableCell className="font-bold text-white py-4">{sub.participantName}</TableCell>
                           <TableCell className="text-[#cbd5e1] py-4">{sub.program}</TableCell>
                           <TableCell className="text-[#cbd5e1] py-4">{sub.assignmentName}</TableCell>
@@ -1254,20 +1762,24 @@ export default function WorkinspiresDashboard() {
                           
                           {/* INDIVIDUAL ROW BUTTON EXTENSION */}
                           <TableCell className="py-4 text-right">
-                            <Button
-                              size="sm"
-                              onClick={() => handleDownloadReport(sub)}
-                              className="bg-[#3b82f6] text-white hover:bg-blue-600 font-semibold h-7 px-3 text-[11px] inline-flex items-center gap-1.5 rounded shadow transition-all"
-                            >
-                              <Download className="h-3 w-3" />
-                              Generate Report
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button type="button" variant="ghost" size="icon-sm" className="h-8 w-8 rounded-md border border-[#475569]/60 bg-transparent text-[#f1f5f9] hover:bg-[#334155]" aria-label={`Open report actions for ${sub.participantName}`}>
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="min-w-[170px] bg-[#1e293b] border-[#475569] text-[#f1f5f9]">
+                                <DropdownMenuItem onSelect={() => handleDownloadReport(sub)}>
+                                  <Download className="h-3.5 w-3.5" /> Generate Report
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       ))}
                       {!loading && reportSubmissions.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center text-[#94a3b8] py-10">
+                          <TableCell colSpan={7} className="text-center text-[#94a3b8] py-10">
                             No submitted participant records are ready for reports yet.
                           </TableCell>
                         </TableRow>
@@ -1311,6 +1823,23 @@ export default function WorkinspiresDashboard() {
                       { value: 'Asia/Singapore', label: 'Asia/Singapore (UTC+8)' },
                     ]}
                   />
+                </div>
+              </div>
+
+              {/* Appearance */}
+              <div className="bg-gradient-to-br from-[#1e293b] to-[#334155] border border-[#475569] rounded-xl p-6 space-y-5">
+                <div className="flex items-center gap-2 border-b border-[#475569] pb-4">
+                  <Moon className="h-4 w-4 text-[#3b82f6]" />
+                  <h2 className="text-sm font-bold text-white">Appearance</h2>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-white">Dark Mode</p>
+                    <p className="text-xs text-[#94a3b8] mt-0.5">Switch the dashboard to the shadcn dark surface palette</p>
+                  </div>
+                  <Button type="button" aria-pressed={shadcnDarkMode} disabled={!themePreferenceHydrated} onClick={handleShadcnDarkModeChange} className={`w-11 h-6 rounded-full transition-colors relative p-0 ${shadcnDarkMode ? 'bg-[#3b82f6] hover:bg-[#3b82f6]' : 'bg-[#475569] hover:bg-[#475569]'}`}>
+                    <span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-all ${shadcnDarkMode ? 'left-6' : 'left-1'}`} />
+                  </Button>
                 </div>
               </div>
 
@@ -1713,34 +2242,19 @@ export default function WorkinspiresDashboard() {
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Due Date *</Label><Input type="date" name="date" required defaultValue={editingAssignment?.rawDate || ''} className="bg-[#334155] border-[#475569] h-11 px-3 text-white" /></div>
               <div className="space-y-2">
-                <Label>Assign To Company *</Label>
+                <Label>Status *</Label>
                 <DashboardSelect
-                  name="target"
+                  name="status"
                   required
-                  defaultValue={editingAssignment?.assignedTo || selectedCompany?.name || ""}
-                  placeholder={selectedCompany ? "Select company" : "Create a company first"}
+                  defaultValue={editingAssignment?.status || "Enabled"}
                   options={[
-                    ...(selectedCompany ? [{ value: selectedCompany.name, label: selectedCompany.name }] : []),
-                    ...(editingAssignment && editingAssignment.assignedTo !== selectedCompany?.name
-                      ? [{ value: editingAssignment.assignedTo, label: `${editingAssignment.assignedTo} (Disabled)` }]
-                      : []),
+                    { value: "Enabled", label: "Enabled" },
+                    { value: "Disabled", label: "Disabled" },
                   ]}
                 />
               </div>
-              <div className="space-y-2"><Label>Due Date *</Label><Input type="date" name="date" required defaultValue={editingAssignment?.rawDate || ''} className="bg-[#334155] border-[#475569] h-11 px-3 text-white" /></div>
-            </div>
-            <div className="space-y-2">
-              <Label>Status *</Label>
-              <DashboardSelect
-                name="status"
-                required
-                defaultValue={editingAssignment?.status || "Enabled"}
-                options={[
-                  { value: "Enabled", label: "Enabled" },
-                  { value: "Disabled", label: "Disabled" },
-                ]}
-              />
             </div>
             <DialogFooter><Button type="submit" className="bg-gradient-to-br from-[#3b82f6] to-[#60a5fa] text-white w-full">Save Assignment</Button></DialogFooter>
           </form>
